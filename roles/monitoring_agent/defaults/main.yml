@@ -5,7 +5,7 @@ monitoring_agent_node_exporter_image: prom/node-exporter:v1.12.1
 monitoring_agent_dcgm_exporter_image: nvcr.io/nvidia/k8s/dcgm-exporter:4.6.1-4.8.4-distroless
 monitoring_agent_vmagent_image: victoriametrics/vmagent:v1.155.0
 
-# Все порты слушают только localhost: метрики уходят наружу через remote write vmagent
+# All ports listen on localhost only: metrics leave the host via vmagent remote write
 monitoring_agent_node_exporter_port: 9100
 monitoring_agent_dcgm_exporter_port: 9400
 monitoring_agent_vmagent_port: 8429
@@ -15,5 +15,5 @@ monitoring_agent_remote_write_username: "{{ monitoring_write_username | default(
 monitoring_agent_remote_write_password: "{{ monitoring_write_password | default('') }}"
 monitoring_agent_scrape_interval: 15s
 
-# Дождаться, пока метрики этого хоста появятся в VictoriaMetrics
+# Wait until this host's metrics show up in VictoriaMetrics
 monitoring_agent_verify: true

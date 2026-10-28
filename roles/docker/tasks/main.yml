@@ -4,7 +4,7 @@
     name: "{{ docker_conflicting_packages }}"
     state: absent
 
-# Тот же репозиторий в формате .list с другим signed-by ломает apt update
+# The same repo as a .list file with a different signed-by breaks apt update
 - name: Remove legacy Docker apt source
   ansible.builtin.file:
     path: /etc/apt/sources.list.d/docker.list
@@ -46,7 +46,7 @@
         max-file: "{{ docker_log_max_file | string }}"
       features:
         cdi: true
-      # То же, что пишет `nvidia-ctk runtime configure`; daemon.json целиком управляется здесь
+      # Same as `nvidia-ctk runtime configure` writes; daemon.json is fully managed here
       runtimes: >-
         {{ {'nvidia': {'path': 'nvidia-container-runtime', 'args': []}}
            if gpu_enabled | default(false) else {} }}

@@ -1,6 +1,6 @@
 # {{ ansible_managed }}
 
-# По умолчанию 64 байта: длинные ключи ("Bearer " + токен) не помещаются
+# Default is 64 bytes: long keys ("Bearer " + token) do not fit
 map_hash_bucket_size 256;
 
 map $http_authorization $llm_auth_ok {
@@ -17,7 +17,7 @@ upstream llm_backend {
     keepalive 16;
 }
 
-# server_tokens задаём в server: в http-контексте Ubuntu 26.04 он уже есть в nginx.conf
+# server_tokens is set per server: Ubuntu 26.04 nginx.conf already sets it in the http context
 server {
     listen {{ llm_proxy_http_port }} default_server;
     server_name {{ llm_proxy_server_name }};
@@ -27,7 +27,7 @@ server {
 
 server {
 {% if ansible_facts['distribution_release'] == 'noble' %}
-    # nginx 1.24: директивы `http2 on` ещё нет
+    # nginx 1.24 has no `http2 on` directive yet
     listen {{ llm_proxy_https_port }} ssl http2 default_server;
 {% else %}
     listen {{ llm_proxy_https_port }} ssl default_server;
@@ -60,7 +60,7 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
 
-        # стриминг (SSE) и долгие генерации
+        # streaming (SSE) and long generations
         proxy_buffering off;
         proxy_read_timeout {{ llm_proxy_read_timeout }};
         proxy_send_timeout {{ llm_proxy_read_timeout }};

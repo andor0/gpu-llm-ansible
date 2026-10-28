@@ -1,11 +1,11 @@
 ---
-# auto — определить по lspci; present / absent — задать явно
+# auto: detect via lspci; present / absent: set explicitly
 common_gpu_mode: auto
-# true — упасть, если GPU не найден (ставится в playbooks/vllm.yml)
+# true: fail if no GPU is found (set in playbooks/vllm.yml)
 common_gpu_required: false
 
 common_supported_releases: [resolute, noble] # 26.04, 24.04
-# Где будут лежать модели
+# Where models will be stored
 common_disk_check_path: /srv/llm
 common_min_free_disk_gb: 50
 
@@ -16,7 +16,7 @@ common_packages:
   - gnupg
   - jq
   - pciutils
-  - python3-debian # для deb822_repository
+  - python3-debian # for deb822_repository
   - ufw
 
 common_ufw_enabled: true

@@ -1,30 +1,30 @@
 ---
 vllm_image: vllm/vllm-openai
-# Образ по умолчанию собран под CUDA 13.x; для старых драйверов есть теги -cu129
+# The default image is built for CUDA 13.x; -cu129 tags exist for older drivers
 vllm_version: v0.32.0
 
 vllm_dir: /opt/vllm
 vllm_hf_cache_dir: /srv/llm/hf-cache
-# Слушает только localhost, наружу — через llm_proxy
+# Listens on localhost only, exposed via llm_proxy
 vllm_port: 8000
 
 vllm_model: Qwen/Qwen3-8B
 vllm_served_model_name: "{{ vllm_model | basename | lower }}"
-# Нужен только для gated-моделей (Llama, Gemma, ...); для Qwen не обязателен
+# Only needed for gated models (Llama, Gemma, ...); not required for Qwen
 vllm_hf_token: ""
 
 vllm_gpu_memory_utilization: 0.90
 vllm_max_model_len: 8192
 vllm_tensor_parallel_size: 1
 vllm_enable_prefix_caching: true
-# Для reasoning-моделей: «размышления» уходят в reasoning_content, а не в content.
-# Должен соответствовать модели (qwen3, deepseek_r1, ...); пустая строка — выключить
+# For reasoning models: "thinking" goes to reasoning_content instead of content.
+# Must match the model (qwen3, deepseek_r1, ...); empty string disables it
 vllm_reasoning_parser: qwen3
 vllm_extra_args: []
 
-# Другие LLM-бэкенды на этом хосте: их останавливаем, чтобы не делить видеопамять
+# Other LLM backends on this host: stopped so they do not share VRAM
 vllm_conflicting_projects:
   - /opt/ollama
 
-# Скачивание весов, загрузка в VRAM и компиляция CUDA graphs может занимать десятки минут
+# Downloading weights, loading into VRAM and compiling CUDA graphs can take tens of minutes
 vllm_start_timeout: 1800

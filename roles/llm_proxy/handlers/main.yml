@@ -1,5 +1,5 @@
 ---
-# Порядок важен: сначала проверка, перезагрузка только валидного конфига
+# Order matters: validate first, reload only a valid config
 - name: Validate nginx config
   ansible.builtin.command: nginx -t
   changed_when: false

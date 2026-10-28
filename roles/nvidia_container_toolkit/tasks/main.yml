@@ -23,7 +23,7 @@
 - name: Apply toolkit to Docker
   ansible.builtin.meta: flush_handlers
 
-# Toolkit сам перегенерирует CDI-спецификацию после обновления драйвера
+# The toolkit regenerates the CDI spec itself after driver upgrades
 - name: Enable automatic CDI spec refresh
   ansible.builtin.systemd_service:
     name: nvidia-cdi-refresh.path

@@ -82,7 +82,7 @@ jobs:
             grep -qE 'changed=0 +unreachable=0 +failed=0' "$RUNNER_TEMP/$pb-second-run.log"
           done
 
-      # То же, что делает роль llm_verify, но curl-ом — как пример из README
+      # Same checks as the llm_verify role, but with curl, as in the README example
       - name: Smoke test API through nginx
         run: |
           code=$(curl -sk -o /dev/null -w '%{http_code}' https://localhost/v1/models)

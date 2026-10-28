@@ -1,6 +1,6 @@
 ---
-# Inventory для e2e в GitHub Actions: раннер без GPU, Ollama на CPU с маленькой моделью,
-# стек мониторинга на том же хосте
+# Inventory for e2e in GitHub Actions: runner without GPU, Ollama on CPU with a small model,
+# monitoring stack on the same host
 all:
   vars:
     ansible_connection: local

@@ -1,5 +1,5 @@
 ---
-# auto — определить по lspci; present / absent — задать явно
+# auto: detect via lspci; present / absent: set explicitly
 common_gpu_mode: auto
 
 nvidia_driver_branch: "580"

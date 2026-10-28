@@ -8,19 +8,19 @@ monitoring_stack_grafana_image: grafana/grafana:13.2.5
 
 monitoring_stack_retention: 90d
 
-# Docker публикует порты в обход UFW, поэтому доступ ограничиваем адресом и авторизацией.
-# VictoriaMetrics принимает remote write от GPU-серверов: лучше слушать на IP приватной сети (VPC).
+# Docker publishes ports bypassing UFW, so access is limited by listen address and auth.
+# VictoriaMetrics receives remote write from GPU servers: prefer listening on a private network (VPC) IP.
 monitoring_stack_victoriametrics_listen: "0.0.0.0:8428"
-# Grafana — только localhost: доступ через `ssh -L 3000:127.0.0.1:3000 <host>`
+# Grafana on localhost only: access via `ssh -L 3000:127.0.0.1:3000 <host>`
 monitoring_stack_grafana_listen: "127.0.0.1:3000"
 
-# Basic auth на все эндпоинты VictoriaMetrics (запись vmagent, чтение Grafana/vmalert)
+# Basic auth on all VictoriaMetrics endpoints (vmagent writes, Grafana/vmalert reads)
 monitoring_stack_vm_username: "{{ monitoring_write_username | default('vmwriter') }}"
 monitoring_stack_vm_password: "{{ monitoring_write_password | default('') }}"
 
 monitoring_stack_grafana_admin_password: ""
 
-# Дашборды: ${DS_*}-плейсхолдеры заменяются на uid datasource VictoriaMetrics
+# Dashboards: ${DS_*} placeholders are replaced with the VictoriaMetrics datasource uid
 monitoring_stack_grafana_dashboards:
   - name: nvidia-dcgm
     url: https://grafana.com/api/dashboards/12239/revisions/2/download
@@ -29,8 +29,8 @@ monitoring_stack_grafana_dashboards:
   - name: vllm
     url: https://raw.githubusercontent.com/vllm-project/vllm/v0.32.0/examples/observability/prometheus_grafana/grafana.json
 
-# Alertmanager выключен, пока не настроены получатели.
-# monitoring_stack_alertmanager_config — содержимое alertmanager.yml (route, receivers)
+# Alertmanager is disabled until receivers are configured.
+# monitoring_stack_alertmanager_config: contents of alertmanager.yml (route, receivers)
 monitoring_stack_alertmanager_enabled: false
 monitoring_stack_alertmanager_config:
   route:

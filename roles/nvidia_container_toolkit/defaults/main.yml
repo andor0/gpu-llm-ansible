@@ -1,5 +1,5 @@
 ---
-# Пустая строка — последняя версия из репозитория
+# Empty string: latest version from the repo
 nvidia_container_toolkit_version: "1.20.1-1"
 nvidia_container_toolkit_packages:
   - nvidia-container-toolkit

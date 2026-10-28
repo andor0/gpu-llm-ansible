@@ -1,21 +1,21 @@
 ---
-# Ветка драйвера из репозитория Ubuntu (nvidia-*-<branch>-server[-open]).
-# 580 — долгоживущая ветка, поддерживает CUDA 12.x/13.x. Доступна также 595.
+# Driver branch from the Ubuntu archive (nvidia-*-<branch>-server[-open]).
+# 580 is a long-lived branch, supports CUDA 12.x/13.x. 595 is also available.
 nvidia_driver_branch: "580"
-# Open kernel modules: рекомендованы для Turing+ и обязательны для Blackwell
+# Open kernel modules: recommended for Turing+, required for Blackwell
 nvidia_driver_open: true
 
-# Flavour ядра для подписанных модулей linux-modules-nvidia-*-<flavour>.
-# auto: generic-hwe-<версия>, если стоит HWE-ядро, иначе суффикс текущего ядра (generic)
+# Kernel flavour for signed modules linux-modules-nvidia-*-<flavour>.
+# auto: generic-hwe-<version> for an HWE kernel, otherwise the running kernel suffix (generic)
 nvidia_driver_kernel_flavour: auto
 
-# Держать драйвер и ядро на hold: обновляются только осознанно через
-# -e nvidia_driver_upgrade=true (снимает hold, обновляет, перезагружает)
+# Keep driver and kernel on hold: upgrade only deliberately with
+# -e nvidia_driver_upgrade=true (unholds, upgrades, reboots)
 nvidia_driver_hold: true
 nvidia_driver_upgrade: false
 
 nvidia_driver_reboot: true
 nvidia_driver_reboot_timeout: 900
 nvidia_driver_persistenced: true
-# Только для HGX/NVSwitch-систем (8x H100/H200/B200)
+# Only for HGX/NVSwitch systems (8x H100/H200/B200)
 nvidia_driver_fabricmanager: false

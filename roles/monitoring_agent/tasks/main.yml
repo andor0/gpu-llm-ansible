@@ -15,7 +15,7 @@
     group: root
     mode: "0755"
 
-# Пароль — через env (-envflag.enable), а не флагом: флаги видны в `ps` и `docker inspect`
+# Password via env (-envflag.enable), not a flag: flags are visible in `ps` and `docker inspect`
 - name: Render env file
   ansible.builtin.copy:
     dest: "{{ monitoring_agent_dir }}/.env"
@@ -45,7 +45,7 @@
     state: present
     pull: missing
 
-# vmagent читает scrape.yml только при старте; compose пересоздаёт контейнер лишь при изменении compose.yml
+# vmagent reads scrape.yml only at startup; compose recreates the container only when compose.yml changes
 - name: Reload vmagent config
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ monitoring_agent_vmagent_port }}/-/reload"

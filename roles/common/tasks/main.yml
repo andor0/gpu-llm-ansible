@@ -15,7 +15,7 @@
     fail_msg: "{{ common_disk_check_path }}: {{ common_free_gb }} GB free, need {{ common_min_free_disk_gb }} GB"
     quiet: true
   vars:
-    # Ближайшая точка монтирования: путь может ещё не существовать
+    # Closest mount point: the path may not exist yet
     common_path_parents: >-
       {%- set parts = common_disk_check_path.rstrip('/').split('/') -%}
       {%- set parents = ['/'] -%}

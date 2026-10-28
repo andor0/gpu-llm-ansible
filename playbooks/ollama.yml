@@ -3,7 +3,7 @@
   hosts: gpu_servers
   become: true
 
-  # Контракт для общих ролей (llm_proxy, llm_verify)
+  # Contract for shared roles (llm_proxy, llm_verify)
   vars:
     llm_backend: ollama
     llm_upstream_port: "{{ ollama_port }}"

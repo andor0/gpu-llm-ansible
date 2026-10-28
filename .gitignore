@@ -5,5 +5,5 @@ collections/
 __pycache__/
 .venv/
 
-# Локальные inventory с реальными IP и ключами
+# Local inventories with real IPs and keys
 inventories/local/

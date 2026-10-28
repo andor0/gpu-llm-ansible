@@ -49,7 +49,7 @@
   check_mode: false
   when: not ansible_check_mode
 
-# В /api/tags модели без тега хранятся как <name>:latest
+# In /api/tags untagged models are listed as <name>:latest
 - name: Pull model
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ ollama_port }}/api/pull"
@@ -66,8 +66,8 @@
     - not ansible_check_mode
     - ollama_model_full not in (ollama_tags.json.models | map(attribute='name'))
 
-# Загружаем модель в память и генерируем один токен: пустой промпт только грузит веса,
-# а JIT-компиляция CUDA-ядер (десятки секунд на новом GPU) досталась бы первому пользователю
+# Load the model and generate one token: an empty prompt only loads weights,
+# and CUDA kernel JIT compilation (tens of seconds on a new GPU) would hit the first user
 - name: Warm up model
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ ollama_port }}/api/generate"

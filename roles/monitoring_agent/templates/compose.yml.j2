@@ -18,7 +18,7 @@ services:
     container_name: dcgm-exporter
     restart: unless-stopped
     cap_add:
-      - SYS_ADMIN # для DCGM_FI_PROF_* метрик
+      - SYS_ADMIN # for DCGM_FI_PROF_* metrics
     ports:
       - "127.0.0.1:{{ monitoring_agent_dcgm_exporter_port }}:9400"
     deploy:
@@ -34,7 +34,7 @@ services:
     image: {{ monitoring_agent_vmagent_image }}
     container_name: vmagent
     restart: unless-stopped
-    network_mode: host # чтобы скрейпить сервисы на 127.0.0.1
+    network_mode: host # to scrape services on 127.0.0.1
     env_file:
       - .env
     volumes:

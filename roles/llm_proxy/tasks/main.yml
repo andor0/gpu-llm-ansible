@@ -14,7 +14,7 @@
   ansible.builtin.apt:
     name:
       - nginx
-      - python3-cryptography # для community.crypto
+      - python3-cryptography # for community.crypto
     state: present
     update_cache: true
     cache_valid_time: 3600
@@ -82,7 +82,7 @@
     dest: /etc/nginx/sites-available/llm.conf
     owner: root
     group: root
-    mode: "0600" # содержит API-ключи
+    mode: "0600" # contains API keys
   no_log: true
   notify:
     - Validate nginx config

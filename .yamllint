@@ -5,7 +5,7 @@ rules:
     max: 160
   truthy:
     allowed-values: ["true", "false"]
-    check-keys: false # `on:` в GitHub Actions
+    check-keys: false # `on:` in GitHub Actions
   comments-indentation: disable
   comments:
     min-spaces-from-content: 1

@@ -3,9 +3,9 @@
   hosts: gpu_servers
   become: true
 
-  # Контракт для общих ролей (llm_proxy, llm_verify)
+  # Contract for shared roles (llm_proxy, llm_verify)
   vars:
-    common_gpu_required: true # vLLM не работает без NVIDIA GPU
+    common_gpu_required: true # vLLM does not run without an NVIDIA GPU
     llm_backend: vllm
     llm_upstream_port: "{{ vllm_port }}"
     llm_health_path: /health

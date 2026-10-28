@@ -6,7 +6,7 @@ docker_packages:
   - docker-buildx-plugin
   - docker-compose-plugin
 
-# Конфликтующие пакеты из репозитория Ubuntu
+# Conflicting packages from the Ubuntu archive
 docker_conflicting_packages:
   - docker.io
   - docker-compose
@@ -17,8 +17,8 @@ docker_conflicting_packages:
 
 docker_log_max_size: 50m
 docker_log_max_file: 5
-# Дополнительные параметры daemon.json
+# Extra daemon.json settings
 docker_daemon_extra_config: {}
 
-# Пользователи в группе docker (фактически root-доступ)
+# Users in the docker group (effectively root access)
 docker_users: []

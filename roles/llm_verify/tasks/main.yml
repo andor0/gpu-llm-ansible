@@ -24,8 +24,8 @@
       max_tokens: "{{ llm_verify_max_tokens }}"
       temperature: 0
 
-# Проверяем по числу сгенерированных токенов: у reasoning-моделей content может быть пустым,
-# если весь лимит ушёл на «размышления»
+# Check generated token count: for reasoning models content can be empty
+# if the whole budget went into "thinking"
 - name: Check that model generated tokens
   ansible.builtin.assert:
     that: llm_verify_direct.json.usage.completion_tokens | int > 0

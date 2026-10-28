@@ -22,8 +22,8 @@
     - grafana/provisioning/datasources
     - grafana/provisioning/dashboards
 
-# Секреты — через env: VictoriaMetrics/vmalert читают флаги из env (-envflag.enable),
-# Grafana подставляет $VM_PASSWORD в provisioning
+# Secrets via env: VictoriaMetrics/vmalert read flags from env (-envflag.enable),
+# Grafana substitutes $VM_PASSWORD in provisioning
 - name: Render env file
   ansible.builtin.template:
     src: env.j2

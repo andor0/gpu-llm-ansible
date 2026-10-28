@@ -2,8 +2,8 @@
 - name: Gather installed packages
   ansible.builtin.package_facts:
 
-# Модули собираются под flavour ядра: HWE — generic-hwe-<версия>, иначе суффикс ядра
-# (7.0.0-31-generic -> generic). Ядро linux-virtual (облака) — то же -generic.
+# Modules are built per kernel flavour: HWE is generic-hwe-<version>, otherwise the kernel suffix
+# (7.0.0-31-generic -> generic). The linux-virtual kernel (clouds) is the same -generic kernel.
 - name: Resolve kernel flavour and package names
   ansible.builtin.set_fact:
     nvidia_driver_flavour: >-
@@ -12,7 +12,7 @@
                if ('linux-image-' ~ nvidia_driver_hwe_flavour) in ansible_facts['packages']
                else ansible_facts['kernel'] | regex_replace('^.*-', '')) }}
     nvidia_driver_suffix: "{{ nvidia_driver_branch }}-server{{ '-open' if nvidia_driver_open else '' }}"
-    # Все установленные мета-пакеты ядра, которые могут его обновить
+    # All installed kernel metapackages that can upgrade it
     nvidia_driver_kernel_packages: >-
       {{ [nvidia_driver_hwe_flavour, 'generic', 'virtual']
          | product(['linux-', 'linux-image-', 'linux-headers-'])
