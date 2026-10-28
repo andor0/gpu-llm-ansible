@@ -9,10 +9,20 @@
       got {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_release'] }}
     quiet: true
 
+# On reruns models are already there: count their space as available
+- name: Measure space already used by models
+  ansible.builtin.command: du -sk {{ common_disk_check_path }}
+  register: common_used
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
 - name: Check free disk space
   ansible.builtin.assert:
     that: common_free_gb | float >= common_min_free_disk_gb
-    fail_msg: "{{ common_disk_check_path }}: {{ common_free_gb }} GB free, need {{ common_min_free_disk_gb }} GB"
+    fail_msg: >-
+      {{ common_disk_check_path }}: {{ common_free_gb }} GB available
+      (free + already used by models), need {{ common_min_free_disk_gb }} GB
     quiet: true
   vars:
     # Closest mount point: the path may not exist yet
@@ -28,7 +38,8 @@
          | selectattr('mount', 'in', common_path_parents)
          | sort(attribute='mount', reverse=true)
          | first }}
-    common_free_gb: "{{ (common_mount['size_available'] / 1024**3) | round(1) }}"
+    common_used_bytes: "{{ (common_used.stdout.split() | first | default(0) | int) * 1024 if common_used.rc == 0 else 0 }}"
+    common_free_gb: "{{ ((common_mount['size_available'] + common_used_bytes | int) / 1024**3) | round(1) }}"
 
 - name: Check gpu mode value
   ansible.builtin.assert:

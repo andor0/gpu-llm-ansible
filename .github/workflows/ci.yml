@@ -62,6 +62,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Container images and the model need several GB; the runner image ships with toolchains we do not use
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup
+          df -h /
+
       - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
