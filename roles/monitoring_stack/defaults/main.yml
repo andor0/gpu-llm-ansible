@@ -22,7 +22,7 @@ monitoring_stack_remote_write_sources: >-
   {{ groups['gpu_servers'] | default([])
      | map('extract', hostvars) | map(attribute='ansible_host', default='') | select | list }}
 
-# Self-signed certificate for VictoriaMetrics. SANs: all IPv4 addresses of the host,
+# Self-signed certificate for VictoriaMetrics. SANs: IPv4 addresses of the host's own interfaces,
 # ansible_host, localhost and these extra names/IPs (e.g. a DNS name used in the URL)
 monitoring_stack_tls_extra_names: []
 monitoring_stack_tls_days: 825

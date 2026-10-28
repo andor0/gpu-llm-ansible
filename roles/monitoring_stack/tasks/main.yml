@@ -51,9 +51,17 @@
     common_name: "{{ inventory_hostname }}"
     subject_alt_name: "{{ monitoring_stack_tls_sans }}"
   vars:
+    # Only real interfaces: Docker bridges come and go and would re-issue the certificate
+    monitoring_stack_host_ips: >-
+      {{ ansible_facts['interfaces']
+         | reject('match', '^(lo|docker|br-|veth)')
+         | map('regex_replace', '-', '_')
+         | map('extract', ansible_facts)
+         | selectattr('ipv4', 'defined')
+         | map(attribute='ipv4.address') | list }}
     monitoring_stack_tls_names: >-
       {{ (['127.0.0.1', ansible_host | default(inventory_hostname)]
-          + ansible_facts['all_ipv4_addresses'] + monitoring_stack_tls_extra_names) | unique }}
+          + monitoring_stack_host_ips + monitoring_stack_tls_extra_names) | unique }}
     monitoring_stack_tls_sans: >-
       {%- set sans = ['DNS:localhost'] -%}
       {%- for name in monitoring_stack_tls_names -%}
