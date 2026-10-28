@@ -1,0 +1,24 @@
+---
+docker_packages:
+  - docker-ce
+  - docker-ce-cli
+  - containerd.io
+  - docker-buildx-plugin
+  - docker-compose-plugin
+
+# Конфликтующие пакеты из репозитория Ubuntu
+docker_conflicting_packages:
+  - docker.io
+  - docker-compose
+  - docker-compose-v2
+  - podman-docker
+  - containerd
+  - runc
+
+docker_log_max_size: 50m
+docker_log_max_file: 5
+# Дополнительные параметры daemon.json
+docker_daemon_extra_config: {}
+
+# Пользователи в группе docker (фактически root-доступ)
+docker_users: []

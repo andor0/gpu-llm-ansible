@@ -1,0 +1,61 @@
+---
+- name: Add NVIDIA Container Toolkit apt repository
+  ansible.builtin.deb822_repository:
+    name: nvidia-container-toolkit
+    types: deb
+    uris: https://nvidia.github.io/libnvidia-container/stable/deb/$(ARCH)
+    suites: /
+    signed_by: https://nvidia.github.io/libnvidia-container/gpgkey
+  register: nvidia_container_toolkit_repo
+
+- name: Install NVIDIA Container Toolkit
+  ansible.builtin.apt:
+    name: >-
+      {{ nvidia_container_toolkit_packages
+         | map('regex_replace', '$', '=' ~ nvidia_container_toolkit_version
+                                     if nvidia_container_toolkit_version else '')
+         | list }}
+    state: present
+    allow_downgrade: true
+    update_cache: "{{ nvidia_container_toolkit_repo is changed }}"
+  notify: Restart docker
+
+- name: Apply toolkit to Docker
+  ansible.builtin.meta: flush_handlers
+
+# Toolkit сам перегенерирует CDI-спецификацию после обновления драйвера
+- name: Enable automatic CDI spec refresh
+  ansible.builtin.systemd_service:
+    name: nvidia-cdi-refresh.path
+    enabled: true
+    state: started
+
+- name: List CDI devices
+  ansible.builtin.command: nvidia-ctk cdi list
+  register: nvidia_container_toolkit_cdi
+  changed_when: false
+  check_mode: false
+
+- name: Generate CDI spec
+  ansible.builtin.systemd_service:
+    name: nvidia-cdi-refresh.service
+    state: started
+  when: "'nvidia.com/gpu=all' not in nvidia_container_toolkit_cdi.stdout"
+
+- name: Smoke test GPU in container (--gpus, as used by compose)
+  ansible.builtin.command: >-
+    docker run --rm --gpus all {{ nvidia_container_toolkit_smoke_image }} nvidia-smi -L
+  register: nvidia_container_toolkit_smoke
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Smoke test GPU in container (CDI)
+  ansible.builtin.command: >-
+    docker run --rm --device nvidia.com/gpu=all {{ nvidia_container_toolkit_smoke_image }} nvidia-smi -L
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Show GPUs visible in containers
+  ansible.builtin.debug:
+    var: nvidia_container_toolkit_smoke.stdout_lines
+  when: not ansible_check_mode

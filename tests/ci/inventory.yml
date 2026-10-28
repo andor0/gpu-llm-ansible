@@ -1,0 +1,28 @@
+---
+# Inventory для e2e в GitHub Actions: раннер без GPU, Ollama на CPU с маленькой моделью,
+# стек мониторинга на том же хосте
+all:
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: /usr/bin/python3
+    common_gpu_mode: absent
+    common_ufw_enabled: false
+    common_min_free_disk_gb: 10
+    monitoring_remote_write_url: http://127.0.0.1:8428/api/v1/write
+    monitoring_write_username: vmwriter
+    monitoring_write_password: ci-test-vm-password
+  children:
+    gpu_servers:
+      hosts:
+        localhost:
+      vars:
+        ollama_model: qwen2.5:0.5b
+        ollama_num_parallel: 1
+        llm_proxy_server_name: localhost
+        llm_proxy_api_keys:
+          - ci-test-token-0123456789
+    monitoring:
+      hosts:
+        localhost:
+      vars:
+        monitoring_stack_grafana_admin_password: ci-test-grafana

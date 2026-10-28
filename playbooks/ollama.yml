@@ -1,0 +1,31 @@
+---
+- name: Deploy Ollama on GPU server
+  hosts: gpu_servers
+  become: true
+
+  # Контракт для общих ролей (llm_proxy, llm_verify)
+  vars:
+    llm_backend: ollama
+    llm_upstream_port: "{{ ollama_port }}"
+    llm_health_path: /api/tags
+    llm_served_model: "{{ ollama_model }}"
+
+  roles:
+    - role: common
+      tags: [common]
+    - role: nvidia_driver
+      when: gpu_enabled
+      tags: [nvidia_driver]
+    - role: docker
+      tags: [docker]
+    - role: nvidia_container_toolkit
+      when: gpu_enabled
+      tags: [nvidia_container_toolkit]
+    - role: ollama
+      tags: [ollama]
+    - role: llm_proxy
+      tags: [llm_proxy]
+    - role: monitoring_agent
+      tags: [monitoring_agent]
+    - role: llm_verify
+      tags: [llm_verify]

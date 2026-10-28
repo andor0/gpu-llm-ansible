@@ -1,0 +1,13 @@
+---
+llm_verify_retries: 60
+llm_verify_delay: 10
+llm_verify_inference_timeout: 300
+llm_verify_prompt: "Reply with the single word: pong"
+# С запасом: reasoning-модели (Qwen3 и др.) сначала «думают»
+llm_verify_max_tokens: 256
+# Минимум занятой видеопамяти, при котором считаем, что модель на GPU
+llm_verify_min_gpu_memory_mib: 500
+
+# Проверять цепочку через nginx: авторизация, allowlist путей, inference
+llm_verify_external: true
+llm_verify_external_url: "https://127.0.0.1:{{ llm_proxy_https_port | default(443) }}"

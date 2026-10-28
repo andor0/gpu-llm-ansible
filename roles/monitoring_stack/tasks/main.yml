@@ -1,0 +1,130 @@
+---
+- name: Check secrets
+  ansible.builtin.assert:
+    that:
+      - monitoring_stack_vm_password | length > 0
+      - monitoring_stack_grafana_admin_password | length > 0
+    fail_msg: Set monitoring_write_password and monitoring_stack_grafana_admin_password
+    quiet: true
+  no_log: true
+
+- name: Create monitoring directories
+  ansible.builtin.file:
+    path: "{{ monitoring_stack_dir }}/{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - ""
+    - rules
+    - dashboards
+    - grafana/provisioning/datasources
+    - grafana/provisioning/dashboards
+
+# Секреты — через env: VictoriaMetrics/vmalert читают флаги из env (-envflag.enable),
+# Grafana подставляет $VM_PASSWORD в provisioning
+- name: Render env file
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ monitoring_stack_dir }}/.env"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+- name: Render compose file
+  ansible.builtin.template:
+    src: compose.yml.j2
+    dest: "{{ monitoring_stack_dir }}/compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Render Grafana provisioning
+  ansible.builtin.template:
+    src: "{{ item }}.yml.j2"
+    dest: "{{ monitoring_stack_dir }}/grafana/provisioning/{{ item }}s/{{ item }}.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - datasource
+    - dashboard
+  notify: Restart grafana
+
+- name: Copy alert rules
+  ansible.builtin.copy:
+    src: rules/
+    dest: "{{ monitoring_stack_dir }}/rules/"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload vmalert
+
+- name: Render Alertmanager config
+  ansible.builtin.copy:
+    dest: "{{ monitoring_stack_dir }}/alertmanager.yml"
+    content: "{{ monitoring_stack_alertmanager_config | to_nice_yaml(indent=2) }}"
+    owner: root
+    group: root
+    mode: "0644"
+  when: monitoring_stack_alertmanager_enabled
+  notify: Restart alertmanager
+
+- name: Download dashboards
+  ansible.builtin.uri:
+    url: "{{ item.url }}"
+    return_content: true
+  loop: "{{ monitoring_stack_grafana_dashboards }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: monitoring_stack_dashboard_src
+  check_mode: false
+
+- name: Install dashboards
+  ansible.builtin.copy:
+    dest: "{{ monitoring_stack_dir }}/dashboards/{{ item.item.name }}.json"
+    content: "{{ item.content | regex_replace('\\$\\{DS_[A-Z0-9_]+\\}', 'victoriametrics') }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ monitoring_stack_dashboard_src.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+
+- name: Start monitoring stack
+  community.docker.docker_compose_v2:
+    project_src: "{{ monitoring_stack_dir }}"
+    state: present
+    pull: missing
+
+- name: Apply config changes
+  ansible.builtin.meta: flush_handlers
+
+- name: Check VictoriaMetrics
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ monitoring_stack_victoriametrics_listen | split(':') | last }}/health"
+    url_username: "{{ monitoring_stack_vm_username }}"
+    url_password: "{{ monitoring_stack_vm_password }}"
+    force_basic_auth: true
+  register: monitoring_stack_vm_health
+  until: monitoring_stack_vm_health.status == 200
+  retries: 12
+  delay: 5
+  when: not ansible_check_mode
+
+- name: Check Grafana
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ monitoring_stack_grafana_listen | split(':') | last }}/api/health"
+  register: monitoring_stack_grafana_health
+  until: monitoring_stack_grafana_health.status == 200
+  retries: 24
+  delay: 5
+  when: not ansible_check_mode
+
+- name: Check that VictoriaMetrics requires auth
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ monitoring_stack_victoriametrics_listen | split(':') | last }}/api/v1/query?query=up"
+    status_code: 401
+  when: not ansible_check_mode

@@ -1,0 +1,63 @@
+---
+- name: Check that GPU is present
+  ansible.builtin.assert:
+    that: gpu_enabled
+    fail_msg: vLLM requires an NVIDIA GPU
+    quiet: true
+
+- name: Create vLLM directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ vllm_dir }}"
+    - "{{ vllm_hf_cache_dir }}"
+
+- name: Find other LLM backends
+  ansible.builtin.stat:
+    path: "{{ item }}/compose.yml"
+  loop: "{{ vllm_conflicting_projects }}"
+  register: vllm_conflicting
+
+- name: Stop other LLM backends (data is kept)
+  community.docker.docker_compose_v2:
+    project_src: "{{ item.item }}"
+    state: stopped
+  loop: "{{ vllm_conflicting.results | selectattr('stat.exists') | list }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Render env file
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ vllm_dir }}/.env"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+- name: Render compose file
+  ansible.builtin.template:
+    src: compose.yml.j2
+    dest: "{{ vllm_dir }}/compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Start vLLM
+  community.docker.docker_compose_v2:
+    project_src: "{{ vllm_dir }}"
+    state: present
+    pull: missing
+
+- name: Wait for vLLM to load the model
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ vllm_port }}/health"
+  register: vllm_health
+  until: vllm_health.status == 200
+  retries: "{{ (vllm_start_timeout | int / 10) | int }}"
+  delay: 10
+  when: not ansible_check_mode

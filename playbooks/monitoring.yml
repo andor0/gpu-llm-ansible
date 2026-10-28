@@ -1,0 +1,12 @@
+---
+- name: Deploy monitoring stack (VictoriaMetrics, vmalert, Grafana)
+  hosts: monitoring
+  become: true
+
+  roles:
+    - role: common
+      tags: [common]
+    - role: docker
+      tags: [docker]
+    - role: monitoring_stack
+      tags: [monitoring_stack]

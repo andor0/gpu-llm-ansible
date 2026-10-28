@@ -1,0 +1,42 @@
+# {{ ansible_managed }}
+services:
+  vllm:
+    image: {{ vllm_image }}:{{ vllm_version }}
+    container_name: vllm
+    restart: unless-stopped
+    ipc: host # shared memory для PyTorch/NCCL
+    ports:
+      - "127.0.0.1:{{ vllm_port }}:8000"
+    volumes:
+      - {{ vllm_hf_cache_dir }}:/root/.cache/huggingface
+    env_file:
+      - .env
+    # ENTRYPOINT образа: vllm serve
+    command:
+      - {{ vllm_model }}
+      - --served-model-name={{ vllm_served_model_name }}
+      - --gpu-memory-utilization={{ vllm_gpu_memory_utilization }}
+      - --max-model-len={{ vllm_max_model_len }}
+      - --tensor-parallel-size={{ vllm_tensor_parallel_size }}
+{% if vllm_enable_prefix_caching %}
+      - --enable-prefix-caching
+{% endif %}
+{% if vllm_reasoning_parser %}
+      - --reasoning-parser={{ vllm_reasoning_parser }}
+{% endif %}
+{% for arg in vllm_extra_args %}
+      - {{ arg }}
+{% endfor %}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: {{ vllm_start_timeout }}s

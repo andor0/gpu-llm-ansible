@@ -1,0 +1,4 @@
+---
+common_gpu_mode: absent
+
+monitoring_stack_grafana_admin_password: "{{ vault_grafana_admin_password }}"

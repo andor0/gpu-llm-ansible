@@ -1,0 +1,13 @@
+# {{ ansible_managed }}
+apiVersion: 1
+datasources:
+  - name: VictoriaMetrics
+    type: prometheus
+    uid: victoriametrics
+    access: proxy
+    url: http://victoriametrics:8428
+    isDefault: true
+    basicAuth: true
+    basicAuthUser: $VM_USERNAME
+    secureJsonData:
+      basicAuthPassword: $VM_PASSWORD

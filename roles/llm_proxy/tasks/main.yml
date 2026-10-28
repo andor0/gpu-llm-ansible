@@ -1,0 +1,125 @@
+---
+- name: Check API keys
+  ansible.builtin.assert:
+    that:
+      - llm_proxy_api_keys | length > 0
+      - llm_proxy_api_keys | reject('match', '^[A-Za-z0-9._~+/=-]{16,200}$') | list | length == 0
+    fail_msg: >-
+      llm_proxy_api_keys must contain at least one key; keys must be 16-200 chars
+      of [A-Za-z0-9._~+/=-]
+    quiet: true
+  no_log: true
+
+- name: Install nginx
+  ansible.builtin.apt:
+    name:
+      - nginx
+      - python3-cryptography # для community.crypto
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create TLS directory
+  ansible.builtin.file:
+    path: "{{ llm_proxy_tls_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Generate self-signed certificate
+  when: llm_proxy_tls_mode == 'selfsigned'
+  block:
+    - name: Generate TLS private key
+      community.crypto.openssl_privatekey:
+        path: "{{ llm_proxy_tls_key }}"
+        type: ECC
+        curve: secp256r1
+        mode: "0600"
+
+    - name: Generate CSR
+      community.crypto.openssl_csr_pipe:
+        privatekey_path: "{{ llm_proxy_tls_key }}"
+        common_name: "{{ llm_proxy_cn }}"
+        subject_alt_name: "{{ ['DNS:' ~ llm_proxy_cn, 'DNS:localhost', 'IP:127.0.0.1'] | unique }}"
+      vars:
+        llm_proxy_cn: "{{ 'localhost' if llm_proxy_server_name == '_' else llm_proxy_server_name }}"
+      register: llm_proxy_csr
+      changed_when: false
+
+    - name: Generate self-signed certificate
+      community.crypto.x509_certificate:
+        path: "{{ llm_proxy_tls_cert }}"
+        csr_content: "{{ llm_proxy_csr.csr }}"
+        privatekey_path: "{{ llm_proxy_tls_key }}"
+        provider: selfsigned
+        selfsigned_not_after: "+{{ llm_proxy_tls_selfsigned_days }}d"
+        mode: "0644"
+      notify:
+        - Validate nginx config
+        - Reload nginx
+
+- name: Check provided certificate
+  when: llm_proxy_tls_mode == 'provided'
+  block:
+    - name: Stat certificate files
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - "{{ llm_proxy_tls_cert }}"
+        - "{{ llm_proxy_tls_key }}"
+      register: llm_proxy_tls_files
+
+    - name: Assert certificate files exist
+      ansible.builtin.assert:
+        that: llm_proxy_tls_files.results | map(attribute='stat.exists') | min
+        fail_msg: "TLS files not found: {{ llm_proxy_tls_cert }}, {{ llm_proxy_tls_key }}"
+        quiet: true
+
+- name: Render nginx site
+  ansible.builtin.template:
+    src: llm.conf.j2
+    dest: /etc/nginx/sites-available/llm.conf
+    owner: root
+    group: root
+    mode: "0600" # содержит API-ключи
+  no_log: true
+  notify:
+    - Validate nginx config
+    - Reload nginx
+
+- name: Disable default site
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify:
+    - Validate nginx config
+    - Reload nginx
+
+- name: Enable LLM site
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/llm.conf
+    dest: /etc/nginx/sites-enabled/llm.conf
+    state: link
+  notify:
+    - Validate nginx config
+    - Reload nginx
+
+- name: Start nginx
+  ansible.builtin.systemd_service:
+    name: nginx
+    enabled: true
+    state: started
+
+- name: Allow HTTP/HTTPS in UFW
+  community.general.ufw:
+    rule: allow
+    port: "{{ item }}"
+    proto: tcp
+  loop:
+    - "{{ llm_proxy_http_port }}"
+    - "{{ llm_proxy_https_port }}"
+  when: common_ufw_enabled | default(true)
+
+- name: Apply nginx config
+  ansible.builtin.meta: flush_handlers

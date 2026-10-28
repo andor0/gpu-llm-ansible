@@ -1,0 +1,72 @@
+# {{ ansible_managed }}
+
+# По умолчанию 64 байта: длинные ключи ("Bearer " + токен) не помещаются
+map_hash_bucket_size 256;
+
+map $http_authorization $llm_auth_ok {
+    default 0;
+{% for key in llm_proxy_api_keys %}
+    "Bearer {{ key }}" 1;
+{% endfor %}
+}
+
+limit_req_zone $http_authorization zone=llm:10m rate={{ llm_proxy_rate_limit }};
+
+upstream llm_backend {
+    server 127.0.0.1:{{ llm_upstream_port }};
+    keepalive 16;
+}
+
+# server_tokens задаём в server: в http-контексте Ubuntu 26.04 он уже есть в nginx.conf
+server {
+    listen {{ llm_proxy_http_port }} default_server;
+    server_name {{ llm_proxy_server_name }};
+    server_tokens off;
+    return 301 https://$host$request_uri;
+}
+
+server {
+{% if ansible_facts['distribution_release'] == 'noble' %}
+    # nginx 1.24: директивы `http2 on` ещё нет
+    listen {{ llm_proxy_https_port }} ssl http2 default_server;
+{% else %}
+    listen {{ llm_proxy_https_port }} ssl default_server;
+    http2 on;
+{% endif %}
+    server_name {{ llm_proxy_server_name }};
+    server_tokens off;
+
+    ssl_certificate     {{ llm_proxy_tls_cert }};
+    ssl_certificate_key {{ llm_proxy_tls_key }};
+    ssl_protocols       TLSv1.2 TLSv1.3;
+
+    client_max_body_size {{ llm_proxy_client_max_body_size }};
+    default_type application/json;
+
+    location ~ ^({{ llm_proxy_allowed_paths | map('regex_escape') | join('|') }})$ {
+        if ($llm_auth_ok = 0) {
+            add_header WWW-Authenticate Bearer always;
+            return 401 '{"error":"unauthorized"}\n';
+        }
+
+        limit_req zone=llm burst={{ llm_proxy_rate_burst }} nodelay;
+        limit_req_status 429;
+
+        proxy_pass http://llm_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # стриминг (SSE) и долгие генерации
+        proxy_buffering off;
+        proxy_read_timeout {{ llm_proxy_read_timeout }};
+        proxy_send_timeout {{ llm_proxy_read_timeout }};
+    }
+
+    location / {
+        return 404 '{"error":"not found"}\n';
+    }
+}

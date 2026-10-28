@@ -1,0 +1,114 @@
+---
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PY_COLORS: "1"
+  ANSIBLE_FORCE_COLOR: "1"
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install tools
+        run: |
+          pip install -r requirements-dev.txt
+          ansible-galaxy collection install -r requirements.yml
+
+      - name: yamllint
+        run: yamllint --strict .
+
+      - name: ansible-lint
+        run: ansible-lint
+
+      - name: Syntax check
+        run: |
+          for pb in playbooks/*.yml; do
+            ansible-playbook -i inventories/example/hosts.yml --syntax-check "$pb"
+          done
+
+  e2e-ollama-cpu:
+    name: E2E (monitoring + Ollama on CPU)
+    needs: lint
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install Ansible
+        run: |
+          pip install -r requirements-dev.txt
+          ansible-galaxy collection install -r requirements.yml
+
+      - name: Run monitoring playbook
+        run: ansible-playbook -i tests/ci/inventory.yml playbooks/monitoring.yml
+
+      - name: Run Ollama playbook
+        run: ansible-playbook -i tests/ci/inventory.yml playbooks/ollama.yml
+
+      - name: Idempotence (second run must not change anything)
+        env:
+          ANSIBLE_FORCE_COLOR: "0"
+        run: |
+          for pb in monitoring ollama; do
+            ansible-playbook -i tests/ci/inventory.yml "playbooks/$pb.yml" --diff | tee "$RUNNER_TEMP/$pb-second-run.log"
+            grep -qE 'changed=0 +unreachable=0 +failed=0' "$RUNNER_TEMP/$pb-second-run.log"
+          done
+
+      # То же, что делает роль llm_verify, но curl-ом — как пример из README
+      - name: Smoke test API through nginx
+        run: |
+          code=$(curl -sk -o /dev/null -w '%{http_code}' https://localhost/v1/models)
+          test "$code" = 401
+
+          curl -sfk https://localhost/v1/chat/completions \
+            -H "Authorization: Bearer ci-test-token-0123456789" \
+            -H "Content-Type: application/json" \
+            -d '{"model": "qwen2.5:0.5b", "messages": [{"role": "user", "content": "Say pong"}], "max_tokens": 10}' \
+            | tee "$RUNNER_TEMP/response.json"
+          jq -e '.choices[0].message.content | length > 0' "$RUNNER_TEMP/response.json"
+
+      - name: Check metrics in VictoriaMetrics and Grafana
+        run: |
+          curl -sf -u vmwriter:ci-test-vm-password --data-urlencode 'query=up{job="node"}' \
+            http://127.0.0.1:8428/api/v1/query | jq -e '.data.result | length > 0'
+          curl -sf -u admin:ci-test-grafana http://127.0.0.1:3000/api/datasources/uid/victoriametrics/health \
+            | jq -e '.status == "OK"'
+          curl -sf -u admin:ci-test-grafana 'http://127.0.0.1:3000/api/search?type=dash-db' | jq -e 'length == 3'
+
+      - name: Container logs
+        if: failure()
+        run: |
+          docker ps -a
+          for c in ollama vmagent victoriametrics vmalert grafana; do
+            echo "::group::$c"; docker logs "$c" --tail 100 || true; echo "::endgroup::"
+          done
+          sudo nginx -T || true
+          sudo tail -n 50 /var/log/nginx/error.log || true

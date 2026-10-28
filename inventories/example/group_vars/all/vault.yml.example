@@ -1,0 +1,15 @@
+---
+# Скопировать в vault.yml и зашифровать: ansible-vault encrypt group_vars/all/vault.yml
+# (позже — заменить на lookup из Infisical)
+
+# Bearer-токены клиентов API (nginx)
+vault_llm_api_keys:
+  - "change-me-long-random-token"
+
+# Токен Hugging Face — нужен только для gated-моделей (Llama, Gemma, ...)
+vault_hf_token: ""
+
+vault_grafana_admin_password: "change-me"
+
+# Basic auth VictoriaMetrics (openssl rand -hex 24)
+vault_monitoring_write_password: "change-me"

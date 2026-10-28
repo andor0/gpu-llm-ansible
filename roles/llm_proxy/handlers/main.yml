@@ -1,0 +1,10 @@
+---
+# Порядок важен: сначала проверка, перезагрузка только валидного конфига
+- name: Validate nginx config
+  ansible.builtin.command: nginx -t
+  changed_when: false
+
+- name: Reload nginx
+  ansible.builtin.systemd_service:
+    name: nginx
+    state: reloaded

@@ -1,0 +1,84 @@
+---
+- name: Create Ollama directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ ollama_dir }}"
+    - "{{ ollama_data_dir }}"
+    - "{{ ollama_cuda_cache_dir }}"
+
+- name: Find other LLM backends
+  ansible.builtin.stat:
+    path: "{{ item }}/compose.yml"
+  loop: "{{ ollama_conflicting_projects }}"
+  register: ollama_conflicting
+
+- name: Stop other LLM backends (data is kept)
+  community.docker.docker_compose_v2:
+    project_src: "{{ item.item }}"
+    state: stopped
+  loop: "{{ ollama_conflicting.results | selectattr('stat.exists') | list }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Render compose file
+  ansible.builtin.template:
+    src: compose.yml.j2
+    dest: "{{ ollama_dir }}/compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Start Ollama
+  community.docker.docker_compose_v2:
+    project_src: "{{ ollama_dir }}"
+    state: present
+    pull: missing
+
+- name: Wait for Ollama API
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ ollama_port }}/api/tags"
+  register: ollama_tags
+  until: ollama_tags.status == 200
+  retries: "{{ ollama_start_retries }}"
+  delay: 5
+  check_mode: false
+  when: not ansible_check_mode
+
+# В /api/tags модели без тега хранятся как <name>:latest
+- name: Pull model
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ ollama_port }}/api/pull"
+    method: POST
+    body_format: json
+    body:
+      model: "{{ ollama_model }}"
+      stream: false
+    timeout: "{{ ollama_pull_timeout }}"
+  changed_when: true
+  vars:
+    ollama_model_full: "{{ ollama_model if ':' in ollama_model else ollama_model ~ ':latest' }}"
+  when:
+    - not ansible_check_mode
+    - ollama_model_full not in (ollama_tags.json.models | map(attribute='name'))
+
+# Загружаем модель в память и генерируем один токен: пустой промпт только грузит веса,
+# а JIT-компиляция CUDA-ядер (десятки секунд на новом GPU) досталась бы первому пользователю
+- name: Warm up model
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ ollama_port }}/api/generate"
+    method: POST
+    body_format: json
+    body:
+      model: "{{ ollama_model }}"
+      prompt: hi
+      stream: false
+      options:
+        num_predict: 1
+    timeout: "{{ ollama_warmup_timeout }}"
+  changed_when: false
+  when: not ansible_check_mode

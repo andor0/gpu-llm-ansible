@@ -1,0 +1,38 @@
+# {{ ansible_managed }}
+services:
+  ollama:
+    image: {{ ollama_image }}:{{ ollama_version }}
+    container_name: ollama
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:{{ ollama_port }}:11434"
+    volumes:
+      - {{ ollama_data_dir }}:/root/.ollama
+{% if gpu_enabled %}
+      # Кэш JIT-компиляции CUDA-ядер: без него первый запрос после пересоздания контейнера ~40 с
+      - {{ ollama_cuda_cache_dir }}:/root/.nv
+{% endif %}
+    environment:
+      OLLAMA_HOST: "0.0.0.0:11434"
+      OLLAMA_KEEP_ALIVE: "{{ ollama_keep_alive }}"
+      OLLAMA_NUM_PARALLEL: "{{ ollama_num_parallel }}"
+      OLLAMA_MAX_LOADED_MODELS: "{{ ollama_max_loaded_models }}"
+      OLLAMA_FLASH_ATTENTION: "{{ ollama_flash_attention | ternary('1', '0') }}"
+      OLLAMA_KV_CACHE_TYPE: "{{ ollama_kv_cache_type }}"
+      OLLAMA_CONTEXT_LENGTH: "{{ ollama_context_length }}"
+{% if gpu_enabled %}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+{% endif %}
+    healthcheck:
+      # в образе нет curl
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s

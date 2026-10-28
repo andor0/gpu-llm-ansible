@@ -1,0 +1,25 @@
+# {{ ansible_managed }}
+global:
+  scrape_interval: {{ monitoring_agent_scrape_interval }}
+
+scrape_configs:
+  - job_name: node
+    static_configs:
+      - targets: ["127.0.0.1:{{ monitoring_agent_node_exporter_port }}"]
+
+  - job_name: vmagent
+    static_configs:
+      - targets: ["127.0.0.1:{{ monitoring_agent_vmagent_port }}"]
+{% if gpu_enabled %}
+
+  - job_name: dcgm
+    static_configs:
+      - targets: ["127.0.0.1:{{ monitoring_agent_dcgm_exporter_port }}"]
+{% endif %}
+{% if llm_backend | default('') == 'vllm' %}
+
+  # У vLLM встроенный Prometheus /metrics; у Ollama его нет
+  - job_name: vllm
+    static_configs:
+      - targets: ["127.0.0.1:{{ llm_upstream_port }}"]
+{% endif %}

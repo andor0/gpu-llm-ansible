@@ -1,0 +1,24 @@
+---
+# auto — определить по lspci; present / absent — задать явно
+common_gpu_mode: auto
+# true — упасть, если GPU не найден (ставится в playbooks/vllm.yml)
+common_gpu_required: false
+
+common_supported_releases: [resolute, noble] # 26.04, 24.04
+# Где будут лежать модели
+common_disk_check_path: /srv/llm
+common_min_free_disk_gb: 50
+
+common_timezone: UTC
+common_packages:
+  - ca-certificates
+  - curl
+  - gnupg
+  - jq
+  - pciutils
+  - python3-debian # для deb822_repository
+  - ufw
+
+common_ufw_enabled: true
+common_ufw_allowed_tcp_ports:
+  - "{{ ansible_port | default(22) }}"

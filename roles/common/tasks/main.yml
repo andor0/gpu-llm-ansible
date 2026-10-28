@@ -1,0 +1,87 @@
+---
+- name: Check that OS is supported
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['distribution'] == 'Ubuntu'
+      - ansible_facts['distribution_release'] in common_supported_releases
+    fail_msg: >-
+      Supported releases: {{ common_supported_releases | join(', ') }};
+      got {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_release'] }}
+    quiet: true
+
+- name: Check free disk space
+  ansible.builtin.assert:
+    that: common_free_gb | float >= common_min_free_disk_gb
+    fail_msg: "{{ common_disk_check_path }}: {{ common_free_gb }} GB free, need {{ common_min_free_disk_gb }} GB"
+    quiet: true
+  vars:
+    # Ближайшая точка монтирования: путь может ещё не существовать
+    common_path_parents: >-
+      {%- set parts = common_disk_check_path.rstrip('/').split('/') -%}
+      {%- set parents = ['/'] -%}
+      {%- for i in range(2, parts | length + 1) -%}
+      {%- set _ = parents.append(parts[:i] | join('/')) -%}
+      {%- endfor -%}
+      {{ parents }}
+    common_mount: >-
+      {{ ansible_facts['mounts']
+         | selectattr('mount', 'in', common_path_parents)
+         | sort(attribute='mount', reverse=true)
+         | first }}
+    common_free_gb: "{{ (common_mount['size_available'] / 1024**3) | round(1) }}"
+
+- name: Check gpu mode value
+  ansible.builtin.assert:
+    that: common_gpu_mode in ['auto', 'present', 'absent']
+    fail_msg: "common_gpu_mode must be auto, present or absent; got {{ common_gpu_mode }}"
+    quiet: true
+
+- name: Install base packages
+  ansible.builtin.apt:
+    name: "{{ common_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Set timezone
+  community.general.timezone:
+    name: "{{ common_timezone }}"
+
+- name: Detect NVIDIA GPU (PCI class 0300 VGA / 0302 3D controller)
+  ansible.builtin.shell: lspci -d 10de::0300; lspci -d 10de::0302
+  register: common_lspci
+  changed_when: false
+  check_mode: false
+  when: common_gpu_mode == 'auto'
+
+- name: Set gpu_enabled fact # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    gpu_enabled: >-
+      {{ common_gpu_mode == 'present'
+         or (common_gpu_mode == 'auto' and common_lspci.stdout | trim | length > 0) }}
+
+- name: Check that GPU is present
+  ansible.builtin.assert:
+    that: gpu_enabled
+    fail_msg: NVIDIA GPU not found, but this playbook requires it
+    quiet: true
+  when: common_gpu_required
+
+- name: Show detected GPUs
+  ansible.builtin.debug:
+    msg: "{{ common_lspci.stdout_lines | default([]) if gpu_enabled else 'No NVIDIA GPU, CPU mode' }}"
+
+- name: Allow incoming TCP ports in UFW
+  community.general.ufw:
+    rule: allow
+    port: "{{ item }}"
+    proto: tcp
+  loop: "{{ common_ufw_allowed_tcp_ports }}"
+  when: common_ufw_enabled
+
+- name: Enable UFW with default deny incoming
+  community.general.ufw:
+    state: enabled
+    direction: incoming
+    policy: deny
+  when: common_ufw_enabled

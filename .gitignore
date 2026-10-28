@@ -1,0 +1,9 @@
+*.retry
+.vault_pass*
+.ansible/
+collections/
+__pycache__/
+.venv/
+
+# Локальные inventory с реальными IP и ключами
+inventories/local/

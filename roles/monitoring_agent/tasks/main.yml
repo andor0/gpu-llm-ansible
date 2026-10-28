@@ -1,0 +1,84 @@
+---
+- name: Check remote write settings
+  ansible.builtin.assert:
+    that:
+      - monitoring_agent_remote_write_url | length > 0
+      - monitoring_agent_remote_write_password | length > 0
+    fail_msg: Set monitoring_remote_write_url and monitoring_write_password
+    quiet: true
+
+- name: Create agent directory
+  ansible.builtin.file:
+    path: "{{ monitoring_agent_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# Пароль — через env (-envflag.enable), а не флагом: флаги видны в `ps` и `docker inspect`
+- name: Render env file
+  ansible.builtin.copy:
+    dest: "{{ monitoring_agent_dir }}/.env"
+    content: |
+      remoteWrite_basicAuth_username={{ monitoring_agent_remote_write_username }}
+      remoteWrite_basicAuth_password={{ monitoring_agent_remote_write_password }}
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+- name: Render agent config
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "{{ monitoring_agent_dir }}/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - compose.yml
+    - scrape.yml
+  register: monitoring_agent_config
+
+- name: Start monitoring agent
+  community.docker.docker_compose_v2:
+    project_src: "{{ monitoring_agent_dir }}"
+    state: present
+    pull: missing
+
+# vmagent читает scrape.yml только при старте; compose пересоздаёт контейнер лишь при изменении compose.yml
+- name: Reload vmagent config
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ monitoring_agent_vmagent_port }}/-/reload"
+  changed_when: true
+  when: monitoring_agent_config.results | selectattr('item', 'equalto', 'scrape.yml') | selectattr('changed') | list | length > 0
+
+- name: Check exporters
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ item }}/metrics"
+  register: monitoring_agent_exporters
+  until: monitoring_agent_exporters.status == 200
+  retries: 12
+  delay: 5
+  loop: >-
+    {{ [monitoring_agent_node_exporter_port]
+       + ([monitoring_agent_dcgm_exporter_port] if gpu_enabled else []) }}
+  when: not ansible_check_mode
+
+- name: Wait for this host's metrics in VictoriaMetrics
+  ansible.builtin.uri:
+    url: >-
+      {{ monitoring_agent_remote_write_url | regex_replace('/api/v1/write$', '') }}/api/v1/query?query={{
+         ('count(up{host="' ~ inventory_hostname ~ '"} == 1)') | urlencode }}
+    url_username: "{{ monitoring_agent_remote_write_username }}"
+    url_password: "{{ monitoring_agent_remote_write_password }}"
+    force_basic_auth: true
+  register: monitoring_agent_query
+  until: monitoring_agent_query.json.data.result | length > 0
+  retries: 12
+  delay: 10
+  when: monitoring_agent_verify and not ansible_check_mode
+
+- name: Show scrape targets that are up
+  ansible.builtin.debug:
+    msg: "{{ monitoring_agent_query.json.data.result[0].value[1] }} targets up for host={{ inventory_hostname }}"
+  when: monitoring_agent_verify and not ansible_check_mode

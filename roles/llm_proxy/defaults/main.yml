@@ -1,0 +1,34 @@
+---
+llm_proxy_server_name: _
+llm_proxy_http_port: 80
+llm_proxy_https_port: 443
+
+# selfsigned — сгенерировать сертификат (демо);
+# provided — использовать готовые файлы (например, Cloudflare Origin CA)
+llm_proxy_tls_mode: selfsigned
+llm_proxy_tls_dir: /etc/nginx/tls
+llm_proxy_tls_cert: "{{ llm_proxy_tls_dir }}/llm.crt"
+llm_proxy_tls_key: "{{ llm_proxy_tls_dir }}/llm.key"
+llm_proxy_tls_selfsigned_days: 825
+
+# Bearer-токены клиентов (из vault / Infisical); 16-200 символов, например `openssl rand -hex 32`
+llm_proxy_api_keys: []
+
+# Лимит на токен (а не на IP: за Cloudflare все запросы придут с IP Cloudflare)
+llm_proxy_rate_limit: 10r/s
+llm_proxy_rate_burst: 20
+llm_proxy_client_max_body_size: 10m
+llm_proxy_read_timeout: 600s
+
+# Наружу открыты только эти пути; /api/pull, /api/delete и т.п. закрыты
+llm_proxy_allowed_paths_common:
+  - /v1/chat/completions
+  - /v1/completions
+  - /v1/embeddings
+  - /v1/models
+llm_proxy_allowed_paths_ollama:
+  - /api/chat
+  - /api/generate
+llm_proxy_allowed_paths: >-
+  {{ llm_proxy_allowed_paths_common
+     + (llm_proxy_allowed_paths_ollama if llm_backend == 'ollama' else []) }}

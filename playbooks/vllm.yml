@@ -1,0 +1,30 @@
+---
+- name: Deploy vLLM on GPU server
+  hosts: gpu_servers
+  become: true
+
+  # Контракт для общих ролей (llm_proxy, llm_verify)
+  vars:
+    common_gpu_required: true # vLLM не работает без NVIDIA GPU
+    llm_backend: vllm
+    llm_upstream_port: "{{ vllm_port }}"
+    llm_health_path: /health
+    llm_served_model: "{{ vllm_served_model_name }}"
+
+  roles:
+    - role: common
+      tags: [common]
+    - role: nvidia_driver
+      tags: [nvidia_driver]
+    - role: docker
+      tags: [docker]
+    - role: nvidia_container_toolkit
+      tags: [nvidia_container_toolkit]
+    - role: vllm
+      tags: [vllm]
+    - role: llm_proxy
+      tags: [llm_proxy]
+    - role: monitoring_agent
+      tags: [monitoring_agent]
+    - role: llm_verify
+      tags: [llm_verify]

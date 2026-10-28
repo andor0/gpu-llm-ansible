@@ -1,0 +1,64 @@
+# {{ ansible_managed }}
+services:
+  victoriametrics:
+    image: {{ monitoring_stack_victoriametrics_image }}
+    container_name: victoriametrics
+    restart: unless-stopped
+    ports:
+      - "{{ monitoring_stack_victoriametrics_listen }}:8428"
+    env_file:
+      - .env # httpAuth_*
+    volumes:
+      - vm-data:/storage
+    command:
+      - -envflag.enable
+      - -storageDataPath=/storage
+      - -retentionPeriod={{ monitoring_stack_retention }}
+
+  vmalert:
+    image: {{ monitoring_stack_vmalert_image }}
+    container_name: vmalert
+    restart: unless-stopped
+    depends_on: [victoriametrics]
+    env_file:
+      - .env # datasource_/remoteWrite_/remoteRead_basicAuth_*
+    volumes:
+      - ./rules:/etc/vmalert/rules:ro
+    command:
+      - -envflag.enable
+      - -rule=/etc/vmalert/rules/*.yml
+      - -datasource.url=http://victoriametrics:8428
+      - -remoteWrite.url=http://victoriametrics:8428
+      - -remoteRead.url=http://victoriametrics:8428
+{% if monitoring_stack_alertmanager_enabled %}
+      - -notifier.url=http://alertmanager:9093
+{% else %}
+      - -notifier.blackhole
+{% endif %}
+{% if monitoring_stack_alertmanager_enabled %}
+
+  alertmanager:
+    image: {{ monitoring_stack_alertmanager_image }}
+    container_name: alertmanager
+    restart: unless-stopped
+    volumes:
+      - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+{% endif %}
+
+  grafana:
+    image: {{ monitoring_stack_grafana_image }}
+    container_name: grafana
+    restart: unless-stopped
+    depends_on: [victoriametrics]
+    ports:
+      - "{{ monitoring_stack_grafana_listen }}:3000"
+    env_file:
+      - .env # GF_*, VM_*
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./dashboards:/var/lib/grafana/dashboards:ro
+
+volumes:
+  vm-data:
+  grafana-data:

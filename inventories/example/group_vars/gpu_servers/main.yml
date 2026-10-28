@@ -1,0 +1,13 @@
+---
+# auto — определить по lspci; present / absent — задать явно
+common_gpu_mode: auto
+
+nvidia_driver_branch: "580"
+
+ollama_model: "{{ 'qwen3:8b' if gpu_enabled | default(false) else 'qwen2.5:0.5b' }}"
+
+vllm_model: Qwen/Qwen3-8B
+vllm_hf_token: "{{ vault_hf_token | default('') }}"
+
+llm_proxy_api_keys: "{{ vault_llm_api_keys }}"
+llm_proxy_server_name: llm.example.com

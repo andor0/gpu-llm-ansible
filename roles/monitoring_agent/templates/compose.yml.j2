@@ -1,0 +1,52 @@
+# {{ ansible_managed }}
+services:
+  node-exporter:
+    image: {{ monitoring_agent_node_exporter_image }}
+    container_name: node-exporter
+    restart: unless-stopped
+    network_mode: host
+    pid: host
+    volumes:
+      - /:/host:ro,rslave
+    command:
+      - --path.rootfs=/host
+      - --web.listen-address=127.0.0.1:{{ monitoring_agent_node_exporter_port }}
+{% if gpu_enabled %}
+
+  dcgm-exporter:
+    image: {{ monitoring_agent_dcgm_exporter_image }}
+    container_name: dcgm-exporter
+    restart: unless-stopped
+    cap_add:
+      - SYS_ADMIN # для DCGM_FI_PROF_* метрик
+    ports:
+      - "127.0.0.1:{{ monitoring_agent_dcgm_exporter_port }}:9400"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+{% endif %}
+
+  vmagent:
+    image: {{ monitoring_agent_vmagent_image }}
+    container_name: vmagent
+    restart: unless-stopped
+    network_mode: host # чтобы скрейпить сервисы на 127.0.0.1
+    env_file:
+      - .env
+    volumes:
+      - ./scrape.yml:/etc/vmagent/scrape.yml:ro
+      - vmagent-data:/vmagent-data
+    command:
+      - -envflag.enable
+      - -promscrape.config=/etc/vmagent/scrape.yml
+      - -remoteWrite.url={{ monitoring_agent_remote_write_url }}
+      - -remoteWrite.tmpDataPath=/vmagent-data
+      - -remoteWrite.label=host={{ inventory_hostname }}
+      - -httpListenAddr=127.0.0.1:{{ monitoring_agent_vmagent_port }}
+
+volumes:
+  vmagent-data:

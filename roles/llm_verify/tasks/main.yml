@@ -1,0 +1,90 @@
+---
+- name: Wait for LLM API health
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ llm_upstream_port }}{{ llm_health_path }}"
+  register: llm_verify_health
+  until: llm_verify_health.status == 200
+  retries: "{{ llm_verify_retries }}"
+  delay: "{{ llm_verify_delay }}"
+
+- name: Run test inference (direct)
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ llm_upstream_port }}/v1/chat/completions"
+    method: POST
+    body_format: json
+    body: "{{ llm_verify_request }}"
+    timeout: "{{ llm_verify_inference_timeout }}"
+  register: llm_verify_direct
+  vars:
+    llm_verify_request: &request
+      model: "{{ llm_served_model }}"
+      messages:
+        - role: user
+          content: "{{ llm_verify_prompt }}"
+      max_tokens: "{{ llm_verify_max_tokens }}"
+      temperature: 0
+
+# Проверяем по числу сгенерированных токенов: у reasoning-моделей content может быть пустым,
+# если весь лимит ушёл на «размышления»
+- name: Check that model generated tokens
+  ansible.builtin.assert:
+    that: llm_verify_direct.json.usage.completion_tokens | int > 0
+    fail_msg: "Empty completion: {{ llm_verify_direct.json }}"
+    quiet: true
+
+- name: Check GPU memory usage
+  ansible.builtin.command: nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits
+  register: llm_verify_gpu
+  changed_when: false
+  failed_when: >-
+    llm_verify_gpu.rc != 0
+    or (llm_verify_gpu.stdout_lines | map('split', ',') | map('last') | map('int') | sum)
+       < llm_verify_min_gpu_memory_mib
+  when: gpu_enabled
+
+- name: Check external endpoint
+  when: llm_verify_external
+  block:
+    - name: Request without token is rejected
+      ansible.builtin.uri:
+        url: "{{ llm_verify_external_url }}/v1/models"
+        validate_certs: false
+        status_code: 401
+
+    - name: Path outside allowlist is closed
+      ansible.builtin.uri:
+        url: "{{ llm_verify_external_url }}/api/pull"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ llm_proxy_api_keys | first }}"
+        validate_certs: false
+        status_code: 404
+      no_log: true
+
+    - name: Run test inference (through nginx)
+      ansible.builtin.uri:
+        url: "{{ llm_verify_external_url }}/v1/chat/completions"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ llm_proxy_api_keys | first }}"
+        body_format: json
+        body: *request
+        timeout: "{{ llm_verify_inference_timeout }}"
+        validate_certs: false
+      register: llm_verify_external_response
+      no_log: true
+
+    - name: Check that model generated tokens (through nginx)
+      ansible.builtin.assert:
+        that: llm_verify_external_response.json.usage.completion_tokens | int > 0
+        quiet: true
+
+- name: Show summary
+  ansible.builtin.debug:
+    msg:
+      - "Backend:  {{ llm_backend }}"
+      - "Model:    {{ llm_verify_direct.json.model }}"
+      - "GPU:      {{ llm_verify_gpu.stdout_lines | default(['none (CPU mode)']) | join('; ') }}"
+      - "Latency:  {{ llm_verify_direct.elapsed }}s, {{ llm_verify_direct.json.usage.completion_tokens }} tokens"
+      - "Answer:   {{ llm_verify_direct.json.choices[0].message.content | default('', true) | trim | truncate(200) }}"
+      - "External: {{ 'OK (401 without token, 404 outside allowlist, 200 with token)' if llm_verify_external else 'skipped' }}"

@@ -1,0 +1,10 @@
+---
+# Пустая строка — последняя версия из репозитория
+nvidia_container_toolkit_version: "1.20.1-1"
+nvidia_container_toolkit_packages:
+  - nvidia-container-toolkit
+  - nvidia-container-toolkit-base
+  - libnvidia-container-tools
+  - libnvidia-container1
+
+nvidia_container_toolkit_smoke_image: nvidia/cuda:12.8.0-base-ubuntu24.04

@@ -1,0 +1,112 @@
+---
+- name: Gather installed packages
+  ansible.builtin.package_facts:
+
+# Модули собираются под flavour ядра: HWE — generic-hwe-<версия>, иначе суффикс ядра
+# (7.0.0-31-generic -> generic). Ядро linux-virtual (облака) — то же -generic.
+- name: Resolve kernel flavour and package names
+  ansible.builtin.set_fact:
+    nvidia_driver_flavour: >-
+      {{ nvidia_driver_kernel_flavour if nvidia_driver_kernel_flavour != 'auto'
+         else (nvidia_driver_hwe_flavour
+               if ('linux-image-' ~ nvidia_driver_hwe_flavour) in ansible_facts['packages']
+               else ansible_facts['kernel'] | regex_replace('^.*-', '')) }}
+    nvidia_driver_suffix: "{{ nvidia_driver_branch }}-server{{ '-open' if nvidia_driver_open else '' }}"
+    # Все установленные мета-пакеты ядра, которые могут его обновить
+    nvidia_driver_kernel_packages: >-
+      {{ [nvidia_driver_hwe_flavour, 'generic', 'virtual']
+         | product(['linux-', 'linux-image-', 'linux-headers-'])
+         | map('reverse') | map('join')
+         | select('in', ansible_facts['packages']) | list }}
+  vars:
+    nvidia_driver_hwe_flavour: "generic-hwe-{{ ansible_facts['distribution_version'] }}"
+
+- name: Build driver package list
+  ansible.builtin.set_fact:
+    nvidia_driver_packages: >-
+      {{ ['nvidia-headless-no-dkms-' ~ nvidia_driver_suffix,
+          'nvidia-utils-' ~ nvidia_driver_branch ~ '-server',
+          'linux-modules-nvidia-' ~ nvidia_driver_suffix ~ '-' ~ nvidia_driver_flavour]
+         + (['nvidia-fabricmanager-' ~ nvidia_driver_branch] if nvidia_driver_fabricmanager else []) }}
+
+- name: Unhold driver and kernel packages for upgrade
+  ansible.builtin.dpkg_selections:
+    name: "{{ item }}"
+    selection: install
+  loop: "{{ nvidia_driver_packages + nvidia_driver_kernel_packages }}"
+  when:
+    - nvidia_driver_upgrade
+    - item in ansible_facts['packages']
+
+- name: Blacklist nouveau
+  ansible.builtin.copy:
+    dest: /etc/modprobe.d/blacklist-nouveau.conf
+    content: |
+      blacklist nouveau
+      options nouveau modeset=0
+    owner: root
+    group: root
+    mode: "0644"
+  register: nvidia_driver_nouveau
+
+- name: Install NVIDIA driver packages
+  ansible.builtin.apt:
+    name: "{{ nvidia_driver_packages + (nvidia_driver_kernel_packages if nvidia_driver_upgrade else []) }}"
+    state: "{{ 'latest' if nvidia_driver_upgrade else 'present' }}"
+    install_recommends: false
+    update_cache: true
+    cache_valid_time: 3600
+  register: nvidia_driver_install
+
+- name: Hold driver and kernel packages
+  ansible.builtin.dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop: "{{ nvidia_driver_packages + nvidia_driver_kernel_packages }}"
+  when: nvidia_driver_hold and not ansible_check_mode
+
+- name: Update initramfs
+  ansible.builtin.command: update-initramfs -u
+  when: nvidia_driver_nouveau is changed or nvidia_driver_install is changed
+  changed_when: true
+
+- name: Check driver is loaded
+  ansible.builtin.command: nvidia-smi
+  register: nvidia_driver_smi_before
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Reboot to load NVIDIA driver
+  ansible.builtin.reboot:
+    reboot_timeout: "{{ nvidia_driver_reboot_timeout }}"
+  when:
+    - nvidia_driver_reboot
+    - nvidia_driver_install is changed or nvidia_driver_smi_before.rc != 0
+    - not ansible_check_mode
+
+- name: Enable fabric manager
+  ansible.builtin.systemd_service:
+    name: nvidia-fabricmanager
+    enabled: true
+    state: started
+  when: nvidia_driver_fabricmanager
+
+- name: Enable persistence daemon
+  ansible.builtin.systemd_service:
+    name: nvidia-persistenced
+    enabled: true
+    state: started
+  when: nvidia_driver_persistenced
+
+- name: Query GPUs
+  ansible.builtin.command: nvidia-smi --query-gpu=index,name,driver_version,memory.total --format=csv,noheader
+  register: nvidia_driver_smi
+  changed_when: false
+  check_mode: false
+  when: not ansible_check_mode
+
+- name: Show GPUs
+  ansible.builtin.debug:
+    var: nvidia_driver_smi.stdout_lines
+  when: not ansible_check_mode

@@ -1,0 +1,62 @@
+---
+groups:
+  - name: gpu
+    rules:
+      - alert: GpuTemperatureHigh
+        expr: DCGM_FI_DEV_GPU_TEMP > 85
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "GPU {{ $labels.gpu }} on {{ $labels.host }} is {{ $value }}°C"
+
+      # Ряд появляется только после первой XID-ошибки (до этого у поля нет значения)
+      - alert: GpuXidErrors
+        expr: DCGM_FI_DEV_XID_ERRORS > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "XID error {{ $value }} on GPU {{ $labels.gpu }} ({{ $labels.host }})"
+
+      # Ampere/Hopper: ошибки HBM обрабатываются через remap строк памяти
+      - alert: GpuRowRemapFailure
+        expr: DCGM_FI_DEV_ROW_REMAP_FAILURE > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "GPU {{ $labels.gpu }} on {{ $labels.host }}: row remapping failed, GPU needs RMA"
+
+      - alert: GpuUncorrectableMemoryErrors
+        expr: increase(DCGM_FI_DEV_UNCORRECTABLE_REMAPPED_ROWS[1h]) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "GPU {{ $labels.gpu }} on {{ $labels.host }}: new uncorrectable memory errors, reset GPU to apply remap"
+
+      - alert: GpuMemoryAlmostFull
+        expr: DCGM_FI_DEV_FB_USED / (DCGM_FI_DEV_FB_USED + DCGM_FI_DEV_FB_FREE) > 0.97
+        for: 15m
+        labels: { severity: info }
+        annotations:
+          summary: "GPU {{ $labels.gpu }} memory > 97% on {{ $labels.host }}"
+
+  - name: host
+    rules:
+      - alert: ScrapeTargetDown
+        expr: up == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.job }} on {{ $labels.host }} is down"
+
+      - alert: DiskAlmostFull
+        expr: 1 - node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay"} > 0.85
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.mountpoint }} on {{ $labels.host }} is {{ $value | humanizePercentage }} full"
+
+  - name: vllm
+    rules:
+      - alert: VllmQueueGrowing
+        expr: vllm:num_requests_waiting > 10
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "vLLM queue on {{ $labels.host }}: {{ $value }} waiting requests"
