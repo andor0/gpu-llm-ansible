@@ -31,10 +31,16 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-dev.txt
 
+      - name: Cache Ansible collections
+        uses: actions/cache@v6
+        with:
+          path: ~/.ansible/collections
+          key: collections-${{ hashFiles('requirements.yml') }}
+
       - name: Install tools
         run: |
           pip install -r requirements-dev.txt
-          ansible-galaxy collection install -r requirements.yml
+          tests/ci/install-collections.sh
 
       - name: yamllint
         run: yamllint --strict .
@@ -62,10 +68,16 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-dev.txt
 
+      - name: Cache Ansible collections
+        uses: actions/cache@v6
+        with:
+          path: ~/.ansible/collections
+          key: collections-${{ hashFiles('requirements.yml') }}
+
       - name: Install Ansible
         run: |
           pip install -r requirements-dev.txt
-          ansible-galaxy collection install -r requirements.yml
+          tests/ci/install-collections.sh
 
       - name: Run monitoring playbook
         run: ansible-playbook -i tests/ci/inventory.yml playbooks/monitoring.yml
