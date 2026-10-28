@@ -13,6 +13,9 @@ nvidia_driver_kernel_flavour: auto
 # -e nvidia_driver_upgrade=true (unholds, upgrades, reboots)
 nvidia_driver_hold: true
 nvidia_driver_upgrade: false
+# Packages to hold: everything from the driver, not the container toolkit
+nvidia_driver_hold_pattern: >-
+  ^(?!nvidia-container|libnvidia-container)(nvidia-|libnvidia-|linux-modules-nvidia-|linux-objects-nvidia-|linux-signatures-nvidia-)
 
 nvidia_driver_reboot: true
 nvidia_driver_reboot_timeout: 900

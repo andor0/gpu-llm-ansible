@@ -49,7 +49,7 @@
       # Same as `nvidia-ctk runtime configure` writes; daemon.json is fully managed here
       runtimes: >-
         {{ {'nvidia': {'path': 'nvidia-container-runtime', 'args': []}}
-           if gpu_enabled | default(false) else {} }}
+           if gpu_enabled else {} }}
   notify: Restart docker
 
 - name: Start Docker
@@ -67,3 +67,33 @@
 
 - name: Apply Docker config
   ansible.builtin.meta: flush_handlers
+
+- name: Set up container autoheal
+  when: docker_autoheal_enabled
+  block:
+    - name: Install autoheal script
+      ansible.builtin.copy:
+        src: container-autoheal.sh
+        dest: /usr/local/bin/container-autoheal
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install autoheal systemd units
+      ansible.builtin.template:
+        src: "container-autoheal.{{ item }}.j2"
+        dest: "/etc/systemd/system/container-autoheal.{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: [service, timer]
+      register: docker_autoheal_units
+
+    # daemon-reload only when units change: it can make running GPU containers lose
+    # their devices (see README, known limitations)
+    - name: Enable autoheal timer
+      ansible.builtin.systemd_service:
+        name: container-autoheal.timer
+        enabled: true
+        state: started
+        daemon_reload: "{{ docker_autoheal_units is changed }}"

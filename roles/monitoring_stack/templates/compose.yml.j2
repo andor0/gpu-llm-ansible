@@ -1,37 +1,48 @@
 # {{ ansible_managed }}
+# Host networking everywhere: nothing is published through Docker, so UFW rules apply
 services:
   victoriametrics:
     image: {{ monitoring_stack_victoriametrics_image }}
     container_name: victoriametrics
     restart: unless-stopped
-    ports:
-      - "{{ monitoring_stack_victoriametrics_listen }}:8428"
+    network_mode: host
     env_file:
       - .env # httpAuth_*
     volumes:
       - vm-data:/storage
+      - ./tls:/tls:ro
     command:
       - -envflag.enable
       - -storageDataPath=/storage
       - -retentionPeriod={{ monitoring_stack_retention }}
+      - -httpListenAddr={{ monitoring_stack_victoriametrics_listen }}
+      - -tls
+      - -tlsCertFile=/tls/vm.crt
+      - -tlsKeyFile=/tls/vm.key
 
   vmalert:
     image: {{ monitoring_stack_vmalert_image }}
     container_name: vmalert
     restart: unless-stopped
+    network_mode: host
     depends_on: [victoriametrics]
     env_file:
       - .env # datasource_/remoteWrite_/remoteRead_basicAuth_*
     volumes:
       - ./rules:/etc/vmalert/rules:ro
+      - ./tls/vm.crt:/tls/vm.crt:ro
     command:
       - -envflag.enable
+      - -httpListenAddr={{ monitoring_stack_vmalert_listen }}
       - -rule=/etc/vmalert/rules/*.yml
-      - -datasource.url=http://victoriametrics:8428
-      - -remoteWrite.url=http://victoriametrics:8428
-      - -remoteRead.url=http://victoriametrics:8428
+      - -datasource.url={{ monitoring_stack_vm_local_url }}
+      - -datasource.tlsCAFile=/tls/vm.crt
+      - -remoteWrite.url={{ monitoring_stack_vm_local_url }}
+      - -remoteWrite.tlsCAFile=/tls/vm.crt
+      - -remoteRead.url={{ monitoring_stack_vm_local_url }}
+      - -remoteRead.tlsCAFile=/tls/vm.crt
 {% if monitoring_stack_alertmanager_enabled %}
-      - -notifier.url=http://alertmanager:9093
+      - -notifier.url=http://{{ monitoring_stack_alertmanager_listen }}
 {% else %}
       - -notifier.blackhole
 {% endif %}
@@ -41,19 +52,29 @@ services:
     image: {{ monitoring_stack_alertmanager_image }}
     container_name: alertmanager
     restart: unless-stopped
+    network_mode: host
     volumes:
       - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./telegram_bot_token:/etc/alertmanager/telegram_bot_token:ro
+      - alertmanager-data:/alertmanager
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+      - --web.listen-address={{ monitoring_stack_alertmanager_listen }}
+      - --cluster.listen-address= # single node: no gossip port
 {% endif %}
 
   grafana:
     image: {{ monitoring_stack_grafana_image }}
     container_name: grafana
     restart: unless-stopped
+    network_mode: host
     depends_on: [victoriametrics]
-    ports:
-      - "{{ monitoring_stack_grafana_listen }}:3000"
     env_file:
       - .env # GF_*, VM_*
+    environment:
+      GF_SERVER_HTTP_ADDR: "{{ monitoring_stack_grafana_listen | split(':') | first }}"
+      GF_SERVER_HTTP_PORT: "{{ monitoring_stack_grafana_listen | split(':') | last }}"
     volumes:
       - grafana-data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
@@ -62,3 +83,6 @@ services:
 volumes:
   vm-data:
   grafana-data:
+{% if monitoring_stack_alertmanager_enabled %}
+  alertmanager-data:
+{% endif %}

@@ -1,0 +1,7 @@
+---
+# vmagent reads the CA file only at startup
+- name: Restart vmagent
+  community.docker.docker_compose_v2:
+    project_src: "{{ monitoring_agent_dir }}"
+    services: [vmagent]
+    state: restarted

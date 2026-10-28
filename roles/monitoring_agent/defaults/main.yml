@@ -15,5 +15,13 @@ monitoring_agent_remote_write_username: "{{ monitoring_write_username | default(
 monitoring_agent_remote_write_password: "{{ monitoring_write_password | default('') }}"
 monitoring_agent_scrape_interval: 15s
 
+# VictoriaMetrics uses a self-signed certificate: vmagent trusts exactly that certificate,
+# read from the first host of the `monitoring` group. Empty: use the system CA store
+# (for a publicly trusted certificate).
+monitoring_agent_ca_source: /opt/monitoring/tls/vm.crt
+
+# node_exporter textfile collector (container health from the docker role's autoheal timer)
+monitoring_agent_textfile_dir: "{{ docker_textfile_dir | default('/var/lib/node_exporter/textfile') }}"
+
 # Wait until this host's metrics show up in VictoriaMetrics
 monitoring_agent_verify: true

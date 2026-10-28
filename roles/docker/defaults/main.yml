@@ -22,3 +22,10 @@ docker_daemon_extra_config: {}
 
 # Users in the docker group (effectively root access)
 docker_users: []
+
+# Restart containers labelled `docker_autoheal_label` when their healthcheck reports
+# unhealthy, and export container health to node_exporter (textfile collector)
+docker_autoheal_enabled: true
+docker_autoheal_label: autoheal=true
+docker_autoheal_interval: 30s
+docker_textfile_dir: /var/lib/node_exporter/textfile

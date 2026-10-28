@@ -7,13 +7,33 @@
     fail_msg: Set monitoring_remote_write_url and monitoring_write_password
     quiet: true
 
-- name: Create agent directory
+- name: Create agent directories
   ansible.builtin.file:
-    path: "{{ monitoring_agent_dir }}"
+    path: "{{ item }}"
     state: directory
     owner: root
     group: root
     mode: "0755"
+  loop:
+    - "{{ monitoring_agent_dir }}"
+    - "{{ monitoring_agent_textfile_dir }}"
+
+- name: Fetch monitoring server certificate
+  ansible.builtin.slurp:
+    src: "{{ monitoring_agent_ca_source }}"
+  delegate_to: "{{ groups['monitoring'][0] }}"
+  register: monitoring_agent_ca
+  when: monitoring_agent_ca_source | length > 0
+
+- name: Install monitoring server certificate
+  ansible.builtin.copy:
+    dest: "{{ monitoring_agent_dir }}/ca.crt"
+    content: "{{ monitoring_agent_ca.content | b64decode }}"
+    owner: root
+    group: root
+    mode: "0644"
+  when: monitoring_agent_ca_source | length > 0
+  notify: Restart vmagent
 
 # Password via env (-envflag.enable), not a flag: flags are visible in `ps` and `docker inspect`
 - name: Render env file
@@ -45,6 +65,9 @@
     state: present
     pull: missing
 
+- name: Apply agent config changes
+  ansible.builtin.meta: flush_handlers
+
 # vmagent reads scrape.yml only at startup; compose recreates the container only when compose.yml changes
 - name: Reload vmagent config
   ansible.builtin.uri:
@@ -69,6 +92,7 @@
     url: >-
       {{ monitoring_agent_remote_write_url | regex_replace('/api/v1/write$', '') }}/api/v1/query?query={{
          ('count(up{host="' ~ inventory_hostname ~ '"} == 1)') | urlencode }}
+    ca_path: "{{ (monitoring_agent_dir ~ '/ca.crt') if monitoring_agent_ca_source | length > 0 else omit }}"
     url_username: "{{ monitoring_agent_remote_write_username }}"
     url_password: "{{ monitoring_agent_remote_write_password }}"
     force_basic_auth: true

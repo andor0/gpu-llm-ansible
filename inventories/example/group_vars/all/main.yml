@@ -3,7 +3,7 @@ ansible_user: ubuntu
 
 # Where vmagent on GPU servers sends metrics (VictoriaMetrics from monitoring_stack).
 # Prefer a private network (VPC) IP, see monitoring_stack_victoriametrics_listen
-monitoring_remote_write_url: "http://{{ hostvars[groups['monitoring'][0]]['ansible_host'] }}:8428/api/v1/write"
+monitoring_remote_write_url: "https://{{ hostvars[groups['monitoring'][0]]['ansible_host'] }}:8428/api/v1/write"
 # VictoriaMetrics basic auth: shared by vmagent (writes) and monitoring_stack
 monitoring_write_username: vmwriter
 monitoring_write_password: "{{ vault_monitoring_write_password }}"

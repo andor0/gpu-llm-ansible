@@ -1,0 +1,11 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Check container health every {{ docker_autoheal_interval }}
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec={{ docker_autoheal_interval }}
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

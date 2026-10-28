@@ -25,7 +25,9 @@
       tags: [ollama]
     - role: llm_proxy
       tags: [llm_proxy]
+    # Optional: only when the inventory has a monitoring server (playbooks/monitoring.yml)
     - role: monitoring_agent
+      when: groups['monitoring'] | default([]) | length > 0
       tags: [monitoring_agent]
     - role: llm_verify
       tags: [llm_verify]

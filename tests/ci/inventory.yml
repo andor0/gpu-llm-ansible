@@ -8,7 +8,7 @@ all:
     common_gpu_mode: absent
     common_ufw_enabled: false
     common_min_free_disk_gb: 10
-    monitoring_remote_write_url: http://127.0.0.1:8428/api/v1/write
+    monitoring_remote_write_url: https://127.0.0.1:8428/api/v1/write
     monitoring_write_username: vmwriter
     monitoring_write_password: ci-test-vm-password
   children:

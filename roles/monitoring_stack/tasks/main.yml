@@ -4,7 +4,10 @@
     that:
       - monitoring_stack_vm_password | length > 0
       - monitoring_stack_grafana_admin_password | length > 0
-    fail_msg: Set monitoring_write_password and monitoring_stack_grafana_admin_password
+      - monitoring_stack_telegram_bot_token | length == 0 or monitoring_stack_telegram_chat_id | string | length > 0
+    fail_msg: >-
+      Set monitoring_write_password and monitoring_stack_grafana_admin_password;
+      monitoring_stack_telegram_chat_id is required with a Telegram bot token
     quiet: true
   no_log: true
 
@@ -21,6 +24,60 @@
     - dashboards
     - grafana/provisioning/datasources
     - grafana/provisioning/dashboards
+
+- name: Create TLS directory
+  ansible.builtin.file:
+    path: "{{ monitoring_stack_dir }}/tls"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install python3-cryptography
+  ansible.builtin.apt:
+    name: python3-cryptography
+    state: present
+
+- name: Generate VictoriaMetrics TLS key
+  community.crypto.openssl_privatekey:
+    path: "{{ monitoring_stack_dir }}/tls/vm.key"
+    type: ECC
+    curve: secp256r1
+    mode: "0600"
+
+- name: Generate VictoriaMetrics CSR
+  community.crypto.openssl_csr_pipe:
+    privatekey_path: "{{ monitoring_stack_dir }}/tls/vm.key"
+    common_name: "{{ inventory_hostname }}"
+    subject_alt_name: "{{ monitoring_stack_tls_sans }}"
+  vars:
+    monitoring_stack_tls_names: >-
+      {{ (['127.0.0.1', ansible_host | default(inventory_hostname)]
+          + ansible_facts['all_ipv4_addresses'] + monitoring_stack_tls_extra_names) | unique }}
+    monitoring_stack_tls_sans: >-
+      {%- set sans = ['DNS:localhost'] -%}
+      {%- for name in monitoring_stack_tls_names -%}
+      {%- set _ = sans.append(('IP:' if name is match('^[0-9.]+$') else 'DNS:') ~ name) -%}
+      {%- endfor -%}
+      {{ sans }}
+  register: monitoring_stack_csr
+  changed_when: false
+
+- name: Generate VictoriaMetrics certificate
+  community.crypto.x509_certificate:
+    path: "{{ monitoring_stack_dir }}/tls/vm.crt"
+    csr_content: "{{ monitoring_stack_csr.csr }}"
+    privatekey_path: "{{ monitoring_stack_dir }}/tls/vm.key"
+    provider: selfsigned
+    selfsigned_not_after: "+{{ monitoring_stack_tls_days }}d"
+    mode: "0644"
+  notify: Restart victoriametrics
+
+- name: Read VictoriaMetrics certificate
+  ansible.builtin.slurp:
+    src: "{{ monitoring_stack_dir }}/tls/vm.crt"
+  register: monitoring_stack_cert_pem
+  check_mode: false
 
 # Secrets via env: VictoriaMetrics/vmalert read flags from env (-envflag.enable),
 # Grafana substitutes $VM_PASSWORD in provisioning
@@ -62,15 +119,41 @@
     mode: "0644"
   notify: Reload vmalert
 
-- name: Render Alertmanager config
-  ansible.builtin.copy:
-    dest: "{{ monitoring_stack_dir }}/alertmanager.yml"
-    content: "{{ monitoring_stack_alertmanager_config | to_nice_yaml(indent=2) }}"
-    owner: root
-    group: root
-    mode: "0644"
+- name: Configure Alertmanager
   when: monitoring_stack_alertmanager_enabled
-  notify: Restart alertmanager
+  block:
+    # Alertmanager runs as nobody (65534)
+    - name: Write Telegram bot token
+      ansible.builtin.copy:
+        dest: "{{ monitoring_stack_dir }}/telegram_bot_token"
+        content: "{{ monitoring_stack_telegram_bot_token }}"
+        owner: root
+        group: "65534"
+        mode: "0640"
+      no_log: true
+      notify: Restart alertmanager
+
+    - name: Render Alertmanager config
+      ansible.builtin.copy:
+        dest: "{{ monitoring_stack_dir }}/alertmanager.yml"
+        content: >-
+          {{ (monitoring_stack_alertmanager_config
+              if monitoring_stack_alertmanager_config | length > 0
+              else lookup('ansible.builtin.template', 'alertmanager.yml.j2') | from_yaml)
+             | to_nice_yaml(indent=2) }}
+        owner: root
+        group: "65534"
+        mode: "0640"
+      notify: Restart alertmanager
+
+    - name: Validate Alertmanager config
+      ansible.builtin.command: >-
+        docker run --rm --entrypoint amtool
+        -v {{ monitoring_stack_dir }}/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+        -v {{ monitoring_stack_dir }}/telegram_bot_token:/etc/alertmanager/telegram_bot_token:ro
+        {{ monitoring_stack_alertmanager_image }} check-config /etc/alertmanager/alertmanager.yml
+      changed_when: false
+      when: not ansible_check_mode
 
 - name: Download dashboards
   ansible.builtin.uri:
@@ -98,13 +181,24 @@
     project_src: "{{ monitoring_stack_dir }}"
     state: present
     pull: missing
+    remove_orphans: true
 
 - name: Apply config changes
   ansible.builtin.meta: flush_handlers
 
+- name: Allow remote write from GPU servers in UFW
+  community.general.ufw:
+    rule: allow
+    from_ip: "{{ item }}"
+    port: "{{ monitoring_stack_victoriametrics_listen | split(':') | last }}"
+    proto: tcp
+  loop: "{{ monitoring_stack_remote_write_sources }}"
+  when: common_ufw_enabled | default(true)
+
 - name: Check VictoriaMetrics
   ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ monitoring_stack_victoriametrics_listen | split(':') | last }}/health"
+    url: "https://127.0.0.1:{{ monitoring_stack_victoriametrics_listen | split(':') | last }}/health"
+    ca_path: "{{ monitoring_stack_dir }}/tls/vm.crt"
     url_username: "{{ monitoring_stack_vm_username }}"
     url_password: "{{ monitoring_stack_vm_password }}"
     force_basic_auth: true
@@ -114,17 +208,30 @@
   delay: 5
   when: not ansible_check_mode
 
+- name: Check that VictoriaMetrics requires auth
+  ansible.builtin.uri:
+    url: "https://127.0.0.1:{{ monitoring_stack_victoriametrics_listen | split(':') | last }}/api/v1/query?query=up"
+    ca_path: "{{ monitoring_stack_dir }}/tls/vm.crt"
+    status_code: 401
+  when: not ansible_check_mode
+
 - name: Check Grafana
   ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ monitoring_stack_grafana_listen | split(':') | last }}/api/health"
+    url: "http://{{ monitoring_stack_grafana_listen }}/api/health"
   register: monitoring_stack_grafana_health
   until: monitoring_stack_grafana_health.status == 200
   retries: 24
   delay: 5
   when: not ansible_check_mode
 
-- name: Check that VictoriaMetrics requires auth
+- name: Check that the Grafana datasource reaches VictoriaMetrics
   ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ monitoring_stack_victoriametrics_listen | split(':') | last }}/api/v1/query?query=up"
-    status_code: 401
+    url: "http://{{ monitoring_stack_grafana_listen }}/api/datasources/uid/victoriametrics/health"
+    url_username: admin
+    url_password: "{{ monitoring_stack_grafana_admin_password }}"
+    force_basic_auth: true
+  register: monitoring_stack_grafana_ds
+  until: monitoring_stack_grafana_ds.status == 200
+  retries: 12
+  delay: 5
   when: not ansible_check_mode

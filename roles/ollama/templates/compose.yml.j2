@@ -4,6 +4,8 @@ services:
     image: {{ ollama_image }}:{{ ollama_version }}
     container_name: ollama
     restart: unless-stopped
+    labels:
+      - {{ docker_autoheal_label | default('autoheal=true') }}
     ports:
       - "127.0.0.1:{{ ollama_port }}:11434"
     volumes:

@@ -33,10 +33,10 @@
   ansible.builtin.dpkg_selections:
     name: "{{ item }}"
     selection: install
-  loop: "{{ nvidia_driver_packages + nvidia_driver_kernel_packages }}"
-  when:
-    - nvidia_driver_upgrade
-    - item in ansible_facts['packages']
+  loop: >-
+    {{ ansible_facts['packages'].keys() | select('match', nvidia_driver_hold_pattern) | list
+       + nvidia_driver_kernel_packages }}
+  when: nvidia_driver_upgrade
 
 - name: Blacklist nouveau
   ansible.builtin.copy:
@@ -58,11 +58,19 @@
     cache_valid_time: 3600
   register: nvidia_driver_install
 
+- name: Gather installed packages after install
+  ansible.builtin.package_facts:
+  when: nvidia_driver_hold
+
+# All driver packages (incl. libnvidia-*, kernel modules) plus kernel metapackages:
+# userspace, kernel modules and kernel must only change together
 - name: Hold driver and kernel packages
   ansible.builtin.dpkg_selections:
     name: "{{ item }}"
     selection: hold
-  loop: "{{ nvidia_driver_packages + nvidia_driver_kernel_packages }}"
+  loop: >-
+    {{ ansible_facts['packages'].keys() | select('match', nvidia_driver_hold_pattern) | list
+       + nvidia_driver_kernel_packages }}
   when: nvidia_driver_hold and not ansible_check_mode
 
 - name: Update initramfs

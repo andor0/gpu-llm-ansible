@@ -1,0 +1,11 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Restart unhealthy containers and export their health
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+Environment=LABEL={{ docker_autoheal_label }}
+Environment=TEXTFILE_DIR={{ docker_textfile_dir }}
+ExecStart=/usr/local/bin/container-autoheal

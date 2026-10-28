@@ -1,4 +1,11 @@
 ---
+# VictoriaMetrics reads the certificate only at startup
+- name: Restart victoriametrics
+  community.docker.docker_compose_v2:
+    project_src: "{{ monitoring_stack_dir }}"
+    services: [victoriametrics]
+    state: restarted
+
 - name: Restart grafana
   community.docker.docker_compose_v2:
     project_src: "{{ monitoring_stack_dir }}"

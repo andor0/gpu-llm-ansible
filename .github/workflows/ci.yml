@@ -113,18 +113,46 @@ jobs:
             | tee "$RUNNER_TEMP/response.json"
           jq -e '.choices[0].message.content | length > 0' "$RUNNER_TEMP/response.json"
 
-      - name: Check metrics in VictoriaMetrics and Grafana
+      # Tagged runs must work: common's GPU detection is tagged `always`
+      - name: Run only llm_verify via tags
+        run: ansible-playbook -i tests/ci/inventory.yml playbooks/ollama.yml --tags llm_verify
+
+      - name: Check metrics in VictoriaMetrics (HTTPS, verified certificate) and Grafana
         run: |
-          curl -sf -u vmwriter:ci-test-vm-password --data-urlencode 'query=up{job="node"}' \
-            http://127.0.0.1:8428/api/v1/query | jq -e '.data.result | length > 0'
+          vm() {
+            curl -sf --cacert /opt/monitoring/tls/vm.crt -u vmwriter:ci-test-vm-password \
+              --data-urlencode "query=$1" https://127.0.0.1:8428/api/v1/query
+          }
+          vm 'up{job="node"}' | jq -e '.data.result | length > 0'
+          vm 'container_healthy{name="ollama"}' | jq -e '.data.result[0].value[1] == "1"'
+          code=$(curl -s -o /dev/null -w '%{http_code}' --cacert /opt/monitoring/tls/vm.crt https://127.0.0.1:8428/api/v1/query?query=up)
+          test "$code" = 401
           curl -sf -u admin:ci-test-grafana http://127.0.0.1:3000/api/datasources/uid/victoriametrics/health \
             | jq -e '.status == "OK"'
           curl -sf -u admin:ci-test-grafana 'http://127.0.0.1:3000/api/search?type=dash-db' | jq -e 'length == 3'
+
+      # A container whose healthcheck always fails must be restarted by the autoheal timer
+      - name: Check container autoheal
+        run: |
+          docker run -d --name autoheal-test --label autoheal=true \
+            --health-cmd false --health-interval 2s --health-retries 1 \
+            alpine:3 sleep 600
+          for i in $(seq 30); do
+            restarts=$(sudo cat /var/lib/container-autoheal/autoheal-test.restarts 2>/dev/null || echo 0)
+            [ "$restarts" -ge 1 ] && break
+            sleep 5
+          done
+          echo "restarts: $restarts"
+          test "$restarts" -ge 1
+          journalctl -t container-autoheal --no-pager | tail -5
+          grep autoheal-test /var/lib/node_exporter/textfile/container_health.prom
+          docker rm -f autoheal-test
 
       - name: Container logs
         if: failure()
         run: |
           docker ps -a
+          systemctl status container-autoheal.timer --no-pager || true
           for c in ollama vmagent victoriametrics vmalert grafana; do
             echo "::group::$c"; docker logs "$c" --tail 100 || true; echo "::endgroup::"
           done

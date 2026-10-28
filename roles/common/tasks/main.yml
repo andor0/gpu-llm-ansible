@@ -1,4 +1,7 @@
 ---
+# Tasks tagged `always` set facts other roles depend on (gpu_enabled), so runs with
+# --tags llm_verify / nvidia_driver / docker / ... get the same values as a full run.
+
 - name: Check that OS is supported
   ansible.builtin.assert:
     that:
@@ -8,6 +11,7 @@
       Supported releases: {{ common_supported_releases | join(', ') }};
       got {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_release'] }}
     quiet: true
+  tags: [always]
 
 # On reruns models are already there: count their space as available
 - name: Measure space already used by models
@@ -46,6 +50,7 @@
     that: common_gpu_mode in ['auto', 'present', 'absent']
     fail_msg: "common_gpu_mode must be auto, present or absent; got {{ common_gpu_mode }}"
     quiet: true
+  tags: [always]
 
 - name: Install base packages
   ansible.builtin.apt:
@@ -64,12 +69,14 @@
   changed_when: false
   check_mode: false
   when: common_gpu_mode == 'auto'
+  tags: [always]
 
 - name: Set gpu_enabled fact # noqa: var-naming[no-role-prefix]
   ansible.builtin.set_fact:
     gpu_enabled: >-
       {{ common_gpu_mode == 'present'
          or (common_gpu_mode == 'auto' and common_lspci.stdout | trim | length > 0) }}
+  tags: [always]
 
 - name: Check that GPU is present
   ansible.builtin.assert:
@@ -77,6 +84,7 @@
     fail_msg: NVIDIA GPU not found, but this playbook requires it
     quiet: true
   when: common_gpu_required
+  tags: [always]
 
 - name: Show detected GPUs
   ansible.builtin.debug:

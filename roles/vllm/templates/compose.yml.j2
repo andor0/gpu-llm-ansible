@@ -4,6 +4,8 @@ services:
     image: {{ vllm_image }}:{{ vllm_version }}
     container_name: vllm
     restart: unless-stopped
+    labels:
+      - {{ docker_autoheal_label | default('autoheal=true') }}
     ipc: host # shared memory for PyTorch/NCCL
     ports:
       - "127.0.0.1:{{ vllm_port }}:8000"

@@ -8,11 +8,24 @@ monitoring_stack_grafana_image: grafana/grafana:13.2.5
 
 monitoring_stack_retention: 90d
 
-# Docker publishes ports bypassing UFW, so access is limited by listen address and auth.
-# VictoriaMetrics receives remote write from GPU servers: prefer listening on a private network (VPC) IP.
+# All containers use host networking: no Docker-published ports, so UFW applies.
+# VictoriaMetrics serves HTTPS with basic auth; UFW opens its port only to
+# monitoring_stack_remote_write_sources. Prefer a private network (VPC) IP here.
 monitoring_stack_victoriametrics_listen: "0.0.0.0:8428"
 # Grafana on localhost only: access via `ssh -L 3000:127.0.0.1:3000 <host>`
 monitoring_stack_grafana_listen: "127.0.0.1:3000"
+monitoring_stack_vmalert_listen: "127.0.0.1:8880"
+monitoring_stack_alertmanager_listen: "127.0.0.1:9093"
+
+# Hosts allowed to reach VictoriaMetrics (vmagent remote write); default: all gpu_servers
+monitoring_stack_remote_write_sources: >-
+  {{ groups['gpu_servers'] | default([])
+     | map('extract', hostvars) | map(attribute='ansible_host', default='') | select | list }}
+
+# Self-signed certificate for VictoriaMetrics. SANs: all IPv4 addresses of the host,
+# ansible_host, localhost and these extra names/IPs (e.g. a DNS name used in the URL)
+monitoring_stack_tls_extra_names: []
+monitoring_stack_tls_days: 825
 
 # Basic auth on all VictoriaMetrics endpoints (vmagent writes, Grafana/vmalert reads)
 monitoring_stack_vm_username: "{{ monitoring_write_username | default('vmwriter') }}"
@@ -29,12 +42,13 @@ monitoring_stack_grafana_dashboards:
   - name: vllm
     url: https://raw.githubusercontent.com/vllm-project/vllm/v0.32.0/examples/observability/prometheus_grafana/grafana.json
 
-# Alertmanager is disabled until receivers are configured.
-# monitoring_stack_alertmanager_config: contents of alertmanager.yml (route, receivers)
-monitoring_stack_alertmanager_enabled: false
-monitoring_stack_alertmanager_config:
-  route:
-    receiver: default
-    group_by: [alertname, host]
-  receivers:
-    - name: default
+# Alert notifications. Setting the Telegram bot token and chat id enables Alertmanager.
+# monitoring_stack_alertmanager_config: full alertmanager.yml (dict) to use instead of the Telegram one
+monitoring_stack_telegram_bot_token: ""
+monitoring_stack_telegram_chat_id: ""
+monitoring_stack_alertmanager_config: {}
+monitoring_stack_alertmanager_enabled: >-
+  {{ monitoring_stack_telegram_bot_token | length > 0 or monitoring_stack_alertmanager_config | length > 0 }}
+
+# How vmalert and Grafana reach VictoriaMetrics on the same host
+monitoring_stack_vm_local_url: "https://127.0.0.1:{{ monitoring_stack_victoriametrics_listen | split(':') | last }}"

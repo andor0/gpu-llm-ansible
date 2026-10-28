@@ -2,3 +2,7 @@
 common_gpu_mode: absent
 
 monitoring_stack_grafana_admin_password: "{{ vault_grafana_admin_password }}"
+
+# Alerts to Telegram: chat id of a user or group (negative for groups)
+monitoring_stack_telegram_bot_token: "{{ vault_telegram_bot_token | default('') }}"
+monitoring_stack_telegram_chat_id: ""

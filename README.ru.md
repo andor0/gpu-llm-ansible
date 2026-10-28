@@ -47,12 +47,17 @@ cp -r inventories/example inventories/prod   # указать IP хостов
 cp inventories/prod/group_vars/all/vault.yml.example inventories/prod/group_vars/all/vault.yml
 ansible-vault encrypt inventories/prod/group_vars/all/vault.yml
 
-ansible-playbook -i inventories/prod playbooks/monitoring.yml --ask-vault-pass
-ansible-playbook -i inventories/prod playbooks/ollama.yml --ask-vault-pass   # или vllm.yml
+ansible-playbook -i inventories/prod playbooks/monitoring.yml --ask-vault-pass   # необязательно, запускать первым
+ansible-playbook -i inventories/prod playbooks/ollama.yml --ask-vault-pass       # или vllm.yml
 
 # только проверка
 ansible-playbook -i inventories/prod playbooks/ollama.yml --tags llm_verify --ask-vault-pass
 ```
+
+Мониторинг необязателен: без группы `monitoring` в inventory `ollama.yml`/`vllm.yml` пропускают агента
+мониторинга. Если группа есть, сначала запускается `monitoring.yml` (GPU-серверы забирают его TLS-сертификат).
+
+Любую роль можно запустить отдельно через `--tags <роль>`: определение GPU в `common` помечено тегом `always`.
 
 ## Доступ к API
 
@@ -75,6 +80,13 @@ ansible-playbook -i inventories/prod playbooks/ollama.yml --tags llm_verify --as
 3. на GPU-сервере проверяет, что модель действительно в видеопамяти (`nvidia-smi`);
 4. через nginx: без токена → `401`, `/api/pull` → `404`, с токеном → успешный ответ модели;
 5. печатает сводку: бэкенд, модель, GPU, latency, ответ.
+
+После развёртывания:
+
+- контейнер с LLM перезапускается, если процесс завершился (`restart: unless-stopped`), и стартует вместе с Docker при загрузке;
+- systemd-таймер `container-autoheal` (роль `docker`) перезапускает контейнеры с меткой `autoheal=true`
+  (Ollama, vLLM), если healthcheck вернул `unhealthy`: политики перезапуска Docker этого не делают.
+  Перезапуски пишутся в журнал (`journalctl -t container-autoheal`) и отдаются метриками с алертом (см. «Мониторинг»).
 
 Ручная проверка:
 
@@ -106,9 +118,10 @@ nginx перенастраивается на новый upstream.
 
 ```
 GPU-сервер                                         Сервер мониторинга (playbooks/monitoring.yml)
- node_exporter :9100 ┐                              ┌ VictoriaMetrics :8428 (basic auth)
- dcgm-exporter :9400 ├─▶ vmagent ── remote write ──▶├ vmalert → Alertmanager (опционально)
- vLLM /metrics :8000 ┘   (все на 127.0.0.1)          └ Grafana 127.0.0.1:3000
+ node_exporter :9100 ┐                              ┌ VictoriaMetrics :8428 (HTTPS + basic auth)
+ dcgm-exporter :9400 ├─▶ vmagent ── remote write ──▶├ vmalert → Alertmanager → Telegram (опционально)
+ vLLM /metrics :8000 ┘   (все на 127.0.0.1)  HTTPS   └ Grafana 127.0.0.1:3000
+ состояние контейнеров (textfile)
 ```
 
 - **Агент** (`monitoring_agent`, входит в `ollama.yml`/`vllm.yml`): экспортеры слушают только localhost,
@@ -117,16 +130,22 @@ GPU-сервер                                         Сервер монит
 - **Стек** (`monitoring_stack`): VictoriaMetrics (хранение `90d`), vmalert с правилами
   `roles/monitoring_stack/files/rules/gpu-llm.yml`, Grafana с datasource и дашбордами
   NVIDIA DCGM, Node Exporter Full, vLLM.
-- **Доступ.** Docker публикует порты в обход UFW, поэтому:
-  - VictoriaMetrics закрыта basic auth (`monitoring_write_password`); в проде задайте
-    `monitoring_stack_victoriametrics_listen` с IP приватной сети (VPC/vRack);
-  - Grafana слушает только localhost: `ssh -L 3000:127.0.0.1:3000 root@<monitoring-host>` → http://localhost:3000
+- **Доступ.** Контейнеры мониторинга работают в host-сети, через Docker ничего не публикуется (это обходило бы UFW):
+  - VictoriaMetrics отдаёт **HTTPS** с самоподписанным сертификатом (SAN: все IP хоста, `ansible_host`,
+    `monitoring_stack_tls_extra_names`) и требует **basic auth** (`monitoring_write_password`). vmagent доверяет
+    именно этому сертификату (забирает его с сервера мониторинга), поэтому пароль не идёт по сети открытым текстом;
+  - UFW открывает порт 8428 только для `monitoring_stack_remote_write_sources` (по умолчанию `ansible_host` всех `gpu_servers`).
+    В проде лучше указать IP приватной сети (VPC/vRack) в `monitoring_stack_victoriametrics_listen`;
+  - Grafana, vmalert и Alertmanager слушают только localhost:
+    `ssh -L 3000:127.0.0.1:3000 root@<monitoring-host>` → http://localhost:3000
     (логин `admin`, пароль `vault_grafana_admin_password`; применяется только при первом запуске Grafana).
 - **Алерты:** температура GPU, XID-ошибки, сбой remap строк памяти и некорректируемые ошибки HBM,
-  заполнение видеопамяти, недоступность цели сбора, заполнение диска, очередь vLLM. Отправка — после
-  `monitoring_stack_alertmanager_enabled: true` и настройки `monitoring_stack_alertmanager_config`
-  (receivers: Telegram/Slack/…).
-- У Ollama нет Prometheus-метрик: для неё доступны метрики GPU и хоста, а доступность API проверяет `llm_verify`.
+  заполнение видеопамяти, недоступность цели сбора, заполнение диска, очередь vLLM, **LLM-контейнер unhealthy /
+  перезапущен autoheal** (это покрывает и Ollama, у которой нет своих Prometheus-метрик).
+- **Уведомления:** задайте `vault_telegram_bot_token` → `monitoring_stack_telegram_bot_token` и
+  `monitoring_stack_telegram_chat_id` — Alertmanager включится, его конфиг проверяется через `amtool`.
+  Другой получатель: полный `alertmanager.yml` в `monitoring_stack_alertmanager_config`.
+  Без этого алерты видны в vmalert/Grafana, но никуда не отправляются.
 
 Если мониторинг ставится на тот же хост, что и LLM, хост добавляется в обе группы inventory, а
 `common_gpu_mode: absent` из `group_vars/monitoring` нужно убрать (иначе GPU не будет обнаружен).
@@ -146,6 +165,44 @@ GPU-сервер                                         Сервер монит
 ansible-playbook -i inventories/prod playbooks/ollama.yml --tags nvidia_driver -e nvidia_driver_upgrade=true
 ```
 
+## Проверка без GPU
+
+Всё, кроме ролей для NVIDIA, проверяется на любой машине или VM с Ubuntu 24.04/26.04:
+
+```bash
+yamllint --strict . && ansible-lint                     # статические проверки
+ansible-playbook -i inventories/example/hosts.yml --syntax-check playbooks/ollama.yml
+
+# полный прогон в CPU-режиме: GPU-роли пропускаются, Ollama запускает маленькую модель на CPU
+ansible-playbook -i tests/ci/inventory.yml playbooks/monitoring.yml   # localhost, см. inventory
+ansible-playbook -i tests/ci/inventory.yml playbooks/ollama.yml
+```
+
+`tests/ci/inventory.yml` задаёт `common_gpu_mode: absent` и `ollama_model: qwen2.5:0.5b`; для удалённой VM
+скопируйте его и замените `ansible_connection: local` на адрес VM. То же самое выполняется в CI (ниже),
+включая идемпотентность, проверки API через nginx, доставку метрик по HTTPS и autoheal контейнеров.
+
+## Известные ограничения
+
+- **GPU-контейнеры после `systemctl daemon-reload`.** С systemd cgroup driver daemon-reload может отнять у
+  работающих GPU-контейнеров доступ к устройству (`Failed to initialize NVML: Unknown Error`) — известная проблема
+  NVIDIA Container Toolkit. Плейбуки не делают лишних reload; если это случится, autoheal перезапустит
+  unhealthy-контейнер. На тестовом сервере не воспроизводилось.
+- **Перезагрузка сервера** покрыта конфигурацией (Docker, nvidia-persistenced, таймер autoheal включены; контейнеры
+  `unless-stopped`), но end-to-end на GPU не проверялась. После перезагрузки Ollama загружает модель при первом
+  запросе (~7 с на H100).
+- **Security-обновления ядра** держатся вместе с драйвером; применять через `nvidia_driver_upgrade=true`.
+- **Самоподписанные сертификаты** (nginx, VictoriaMetrics) действуют 825 дней и не перевыпускаются автоматически;
+  в проде — `llm_proxy_tls_mode: provided` с управляемым сертификатом.
+- Лимиты на параллельные запросы и `max_tokens` на токен nginx не ограничивает (только частоту запросов).
+
+## Возможные улучшения
+
+- Секреты из Infisical вместо Ansible Vault; логи (Docker, nginx) в VictoriaLogs.
+- Cloudflare Tunnel/Access перед nginx (без открытых входящих портов), сертификаты Let's Encrypt или Origin CA.
+- LiteLLM как gateway: квоты по ключам, учёт использования, маршрутизация между несколькими GPU-серверами.
+- Docker Swarm или Kubernetes (GPU Operator) для нескольких нод.
+
 ## Проверено на
 
 DigitalOcean GPU Droplet: NVIDIA H100 SXM5 80GB, Ubuntu 26.04.1 LTS (ядро 7.0.0, `linux-virtual`), 2026-10-28.
@@ -157,6 +214,9 @@ DigitalOcean GPU Droplet: NVIDIA H100 SXM5 80GB, Ubuntu 26.04.1 LTS (ядро 7.
 | `monitoring.yml` | VictoriaMetrics, vmalert (8 правил), Grafana с 3 дашбордами; метрики GPU и vLLM (TTFT, токены, KV cache) доходят; повторный прогон `changed=0` |
 | Снаружи | 401 без токена, 404 вне allowlist, стриминг через nginx; VictoriaMetrics — 401 без пароля; Grafana и экспортеры недоступны |
 
+Изменения после теста на GPU (VictoriaMetrics по HTTPS, autoheal контейнеров, hold всех пакетов NVIDIA,
+определение GPU с тегом `always`) проверены в CI и локальными тестами в контейнерах, но ещё не на GPU.
+
 ## CI
 
 `.github/workflows/ci.yml`, раннер `ubuntu-26.04`:
@@ -164,7 +224,7 @@ DigitalOcean GPU Droplet: NVIDIA H100 SXM5 80GB, Ubuntu 26.04.1 LTS (ядро 7.
 | Job | Что проверяет |
 |---|---|
 | Lint | `yamllint --strict`, `ansible-lint` (profile `production`), `--syntax-check` всех плейбуков |
-| E2E (monitoring + Ollama on CPU) | `monitoring.yml` и `ollama.yml` на раннере без GPU (`tests/ci/inventory.yml`, модель `qwen2.5:0.5b`), включая nginx, `llm_verify` и доставку метрик; повторные прогоны без изменений; `curl` через nginx, запросы к VictoriaMetrics и Grafana |
+| E2E (monitoring + Ollama on CPU) | `monitoring.yml` и `ollama.yml` на раннере без GPU (`tests/ci/inventory.yml`, модель `qwen2.5:0.5b`), включая nginx, `llm_verify` и доставку метрик; повторные прогоны без изменений; прогон `--tags llm_verify`; `curl` через nginx; VictoriaMetrics по HTTPS с проверкой сертификата; Grafana; autoheal перезапускает контейнер с падающим healthcheck |
 
 Роли с GPU (`nvidia_driver`, `nvidia_container_toolkit`) в CI пропускаются: на раннерах GitHub нет NVIDIA GPU.
 
@@ -207,5 +267,4 @@ for chunk in stream:
 
 ## TODO
 
-- [ ] Секреты из Infisical
 - [ ] README: таблица переменных, troubleshooting

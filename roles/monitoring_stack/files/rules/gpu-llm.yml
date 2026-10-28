@@ -60,3 +60,20 @@ groups:
         labels: { severity: warning }
         annotations:
           summary: "vLLM queue on {{ $labels.host }}: {{ $value }} waiting requests"
+
+  # From the docker role's container-autoheal timer (node_exporter textfile collector).
+  # Covers Ollama too, which has no Prometheus metrics of its own.
+  - name: containers
+    rules:
+      - alert: ContainerUnhealthy
+        expr: container_healthy == 0
+        for: 3m
+        labels: { severity: critical }
+        annotations:
+          summary: "Container {{ $labels.name }} on {{ $labels.host }} is unhealthy or not running"
+
+      - alert: ContainerRestartedByAutoheal
+        expr: increase(container_autoheal_restarts_total[30m]) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "Container {{ $labels.name }} on {{ $labels.host }} was restarted after failing its healthcheck"

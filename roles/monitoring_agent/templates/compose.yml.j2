@@ -11,6 +11,7 @@ services:
     command:
       - --path.rootfs=/host
       - --web.listen-address=127.0.0.1:{{ monitoring_agent_node_exporter_port }}
+      - --collector.textfile.directory=/host{{ monitoring_agent_textfile_dir }}
 {% if gpu_enabled %}
 
   dcgm-exporter:
@@ -39,11 +40,17 @@ services:
       - .env
     volumes:
       - ./scrape.yml:/etc/vmagent/scrape.yml:ro
+{% if monitoring_agent_ca_source | length > 0 %}
+      - ./ca.crt:/etc/vmagent/ca.crt:ro
+{% endif %}
       - vmagent-data:/vmagent-data
     command:
       - -envflag.enable
       - -promscrape.config=/etc/vmagent/scrape.yml
       - -remoteWrite.url={{ monitoring_agent_remote_write_url }}
+{% if monitoring_agent_ca_source | length > 0 %}
+      - -remoteWrite.tlsCAFile=/etc/vmagent/ca.crt
+{% endif %}
       - -remoteWrite.tmpDataPath=/vmagent-data
       - -remoteWrite.label=host={{ inventory_hostname }}
       - -httpListenAddr=127.0.0.1:{{ monitoring_agent_vmagent_port }}

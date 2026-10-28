@@ -5,9 +5,13 @@ datasources:
     type: prometheus
     uid: victoriametrics
     access: proxy
-    url: http://victoriametrics:8428
+    url: {{ monitoring_stack_vm_local_url }}
     isDefault: true
     basicAuth: true
     basicAuthUser: $VM_USERNAME
+    jsonData:
+      tlsAuthWithCACert: true
     secureJsonData:
       basicAuthPassword: $VM_PASSWORD
+      tlsCACert: |
+        {{ monitoring_stack_cert_pem.content | b64decode | trim | indent(8) }}

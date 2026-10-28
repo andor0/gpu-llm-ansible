@@ -13,3 +13,6 @@ vault_grafana_admin_password: "change-me"
 
 # VictoriaMetrics basic auth (openssl rand -hex 24)
 vault_monitoring_write_password: "change-me"
+
+# Telegram bot for alerts (from @BotFather); empty disables notifications
+vault_telegram_bot_token: ""
