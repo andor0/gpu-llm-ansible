@@ -59,6 +59,53 @@ the monitoring agent. With it, run `monitoring.yml` first (GPU servers fetch its
 
 Any role can be run on its own with `--tags <role>`: GPU detection in `common` is tagged `always`.
 
+## Main variables
+
+The variables you most likely want to change. All variables with defaults and comments are in
+`roles/*/defaults/main.yml`; set overrides in `inventories/<env>/group_vars/`.
+
+| Variable | Default | Description |
+|---|---|---|
+| **Common** | | |
+| `common_gpu_mode` | `auto` | `auto` (detect via `lspci`), `present`, `absent` (CPU mode) |
+| `common_disk_check_path` / `common_min_free_disk_gb` | `/srv/llm` / `50` | Pre-flight disk check; space already used by models counts as available |
+| `common_ufw_enabled` | `true` | Enable UFW (deny incoming, allow SSH) |
+| **NVIDIA driver** | | |
+| `nvidia_driver_branch` | `"580"` | Ubuntu driver branch (`580`, `595`, …) |
+| `nvidia_driver_open` | `true` | Open kernel modules (required for Blackwell) |
+| `nvidia_driver_hold` / `nvidia_driver_upgrade` | `true` / `false` | Hold driver + kernel; `upgrade=true` upgrades them together and reboots |
+| `nvidia_driver_fabricmanager` | `false` | Fabric manager for HGX/NVSwitch systems |
+| **Ollama** | | |
+| `ollama_version` | `"0.40.12"` | Image tag |
+| `ollama_model` | `qwen3:8b` | Model from the Ollama library |
+| `ollama_num_parallel` / `ollama_context_length` | `4` / `8192` | Parallel requests per model, context window |
+| `ollama_kv_cache_type` | `q8_0` | KV cache quantization (`f16`, `q8_0`, `q4_0`) |
+| **vLLM** | | |
+| `vllm_version` | `v0.32.0` | Image tag |
+| `vllm_model` | `Qwen/Qwen3-8B` | Hugging Face model id |
+| `vllm_served_model_name` | `qwen3-8b` | Model name in the API |
+| `vllm_gpu_memory_utilization` | `0.90` | Share of VRAM vLLM reserves (weights + KV cache) |
+| `vllm_max_model_len` | `8192` | Max context length |
+| `vllm_tensor_parallel_size` | `1` | Number of GPUs for one model |
+| `vllm_reasoning_parser` | `qwen3` | Reasoning parser; empty for non-reasoning models |
+| `vllm_hf_token` | `""` | Hugging Face token, only for gated models |
+| `vllm_extra_args` | `[]` | Any extra `vllm serve` flags |
+| **API proxy (nginx)** | | |
+| `llm_proxy_api_keys` | `[]` | Client bearer tokens (required, 16–200 chars) |
+| `llm_proxy_server_name` | `_` | Domain name |
+| `llm_proxy_tls_mode` | `selfsigned` | `selfsigned` or `provided` (`llm_proxy_tls_cert` / `llm_proxy_tls_key`) |
+| `llm_proxy_rate_limit` / `llm_proxy_rate_burst` | `10r/s` / `20` | Rate limit per token |
+| `llm_proxy_read_timeout` | `600s` | Upstream read timeout (long generations) |
+| **Monitoring** | | |
+| `monitoring_remote_write_url` | — | `https://<monitoring-host>:8428/api/v1/write` |
+| `monitoring_write_password` | — | VictoriaMetrics basic auth password (vault) |
+| `monitoring_stack_victoriametrics_listen` | `0.0.0.0:8428` | Prefer a private network IP |
+| `monitoring_stack_remote_write_sources` | `ansible_host` of `gpu_servers` | IPs allowed to port 8428 in UFW |
+| `monitoring_stack_tls_extra_names` | `[]` | Extra DNS names/IPs for the VictoriaMetrics certificate |
+| `monitoring_stack_grafana_admin_password` | — | Grafana `admin` password (vault) |
+| `monitoring_stack_telegram_bot_token` / `_chat_id` | `""` | Telegram notifications (enables Alertmanager) |
+| `monitoring_stack_retention` | `90d` | Metrics retention |
+
 ## API access
 
 The model listens on `127.0.0.1` only; nginx exposes it (role `llm_proxy`):
@@ -196,6 +243,28 @@ including idempotency, API checks through nginx, metrics delivery over HTTPS and
   use `llm_proxy_tls_mode: provided` with a managed certificate in production.
 - Per-token concurrency and `max_tokens` limits are not enforced by nginx (only the request rate).
 
+## Troubleshooting
+
+| Symptom | Likely cause | What to do |
+|---|---|---|
+| `NVIDIA GPU not found, but this playbook requires it` | No NVIDIA device on PCI (e.g. an AMD Instinct droplet), or the GPU is not passed through to the VM | `lspci -nn \| grep -i -e nvidia -e 10de`. Only NVIDIA (vendor `10de`) is supported; recreate the server with an NVIDIA GPU |
+| `nvidia-smi`: *couldn't communicate with the NVIDIA driver* | Booted into a kernel without NVIDIA modules (e.g. kernel upgraded outside the playbook), or reboot pending | `uname -r` vs `dpkg -l 'linux-modules-nvidia-*'`; rerun `--tags nvidia_driver` (installs modules for the kernel flavour and reboots) |
+| `Failed to initialize NVML: Driver/library version mismatch` | Userspace driver upgraded, old kernel module still loaded | Reboot; upgrade only with `nvidia_driver_upgrade=true` |
+| `could not select device driver "nvidia" with capabilities: [[gpu]]` | Container toolkit missing or Docker not restarted | `--tags nvidia_container_toolkit`; check `docker info \| grep -i runtimes` |
+| `Failed to initialize NVML: Unknown Error` inside a running container | Container lost GPU access after `systemctl daemon-reload` (see Known limitations) | `docker restart ollama` (or `vllm`); autoheal does it once the healthcheck fails |
+| vLLM: *CUDA out of memory* / *free memory … less than desired GPU memory utilization* | VRAM taken by another process (e.g. Ollama) or the model + KV cache does not fit | `nvidia-smi`; lower `vllm_max_model_len` or `vllm_gpu_memory_utilization`, use a quantized model (`Qwen/Qwen3-8B-AWQ`/`-FP8`) |
+| vLLM stays `health: starting` for a long time | Downloading weights, CUDA graph compilation | `docker logs -f vllm`; the playbook waits up to `vllm_start_timeout` |
+| First request after deploying a new GPU takes ~40 s (Ollama) | CUDA kernel JIT compilation | Done by the playbook warm-up; the cache persists in `/srv/llm/ollama-cuda-cache` |
+| API `401` | Missing or wrong token, missing `Bearer ` prefix | `Authorization: Bearer <key>`; key must be in `llm_proxy_api_keys` |
+| API `404` | Path is not in the allowlist (e.g. `/api/tags`, `/api/pull`) | Use `/v1/*` endpoints; extend `llm_proxy_allowed_paths` only if really needed |
+| API `429` | Rate limit per token | Raise `llm_proxy_rate_limit` / `llm_proxy_rate_burst` or use separate keys |
+| API `502` | Backend is down or restarting | `docker ps`, `docker logs ollama\|vllm`, `journalctl -t container-autoheal` |
+| API `504` / cut-off answers | Long non-streaming generation exceeds the timeout (Cloudflare: ~100 s) | Use `"stream": true`; raise `llm_proxy_read_timeout` |
+| *Wait for this host's metrics in VictoriaMetrics* fails | UFW on the monitoring host blocks the GPU server, wrong password, or the URL host is not in the certificate | `docker logs vmagent` (`x509` → add the name/IP to `monitoring_stack_tls_extra_names`; `401` → password; timeout → `monitoring_stack_remote_write_sources`) |
+| No alerts in Telegram | Alertmanager disabled, wrong chat id, or the bot cannot write to the chat | Check `monitoring_stack_telegram_*`; start a chat with the bot / add it to the group; `docker logs alertmanager` |
+| New Grafana password from vault does not work | Applied only on Grafana's first start | `docker exec grafana grafana cli admin reset-admin-password <password>` |
+| Pre-flight *Check free disk space* fails | Not enough space for images and models | Free space or set `common_disk_check_path` / `common_min_free_disk_gb` |
+
 ## Possible improvements
 
 - Secrets from Infisical instead of Ansible Vault; logs (Docker, nginx) to VictoriaLogs.
@@ -264,7 +333,3 @@ stream = client.chat.completions.create(
 for chunk in stream:
     print(chunk.choices[0].delta.content or "", end="", flush=True)
 ```
-
-## TODO
-
-- [ ] README: variables table, troubleshooting
