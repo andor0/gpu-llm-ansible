@@ -39,6 +39,39 @@ Ansible-плейбуки для настройки GPU-сервера (Ubuntu + 
 `ollama` и `vllm` подключаются к общим ролям через переменные, заданные в плейбуке:
 `llm_backend`, `llm_upstream_port`, `llm_health_path`, `llm_served_model`.
 
+## Архитектура
+
+### Сейчас
+
+```
+                         GPU-сервер (playbooks/ollama.yml | vllm.yml)
+ Клиент ──HTTPS──▶ nginx :443  TLS · Bearer-токены · rate limit на токен · allowlist путей
+                     │ 127.0.0.1
+                     ▼
+                   Ollama :11434  или  vLLM :8000     Docker Compose, один бэкенд на сервер
+                     │
+                   NVIDIA GPU   драйвер 580-server-open (подписанные модули) · Container Toolkit · CDI
+                   container-autoheal (systemd-таймер): перезапуск unhealthy-контейнеров, метрики
+
+ node_exporter · dcgm-exporter · vLLM /metrics ──▶ vmagent ──HTTPS + basic auth──┐
+                                                                                 ▼
+                       Сервер мониторинга (playbooks/monitoring.yml)    VictoriaMetrics :8428
+                                                    Grafana ◀──────────────────┤
+                                     Telegram ◀── Alertmanager ◀── vmalert ◀───┘
+```
+
+### Ключевые решения
+
+| Решение | Почему |
+|---|---|
+| Docker Compose, а не Swarm | Одна GPU-нода на бэкенд; GPU в Swarm работают только через generic resources, `deploy.resources.reservations.devices` там игнорируется |
+| Драйвер из репозитория Ubuntu, подписанные модули, без DKMS | Работает с Secure Boot, нет сборки модулей при обновлении ядра; драйвер и ядро на hold и обновляются вместе |
+| Один бэкенд на GPU-сервер: Ollama или vLLM | Оба резервируют видеопамять; Ollama простая и работает на CPU (dev, CI), vLLM даёт throughput под параллельной нагрузкой (прод) |
+| Модель на `127.0.0.1`, наружу только nginx | У Ollama нет авторизации и открыты `/api/pull`, `/api/delete`; TLS, токены и лимиты в одном месте |
+| OpenAI-совместимый API | Клиенты не меняются при смене бэкенда или появлении gateway |
+| Отдельный сервер мониторинга, push через vmagent | GPU-серверам не нужны входящие порты для мониторинга; работает между провайдерами (OVH, DigitalOcean, Cherry) |
+| Autoheal как systemd-таймер | Политики перезапуска Docker игнорируют `unhealthy`; не нужен сторонний образ |
+
 ## Быстрый старт
 
 ```bash
@@ -264,13 +297,6 @@ ansible-playbook -i tests/ci/inventory.yml playbooks/ollama.yml
 | Нет алертов в Telegram | Alertmanager выключен, неверный chat id или бот не может писать в чат | Проверить `monitoring_stack_telegram_*`; начать диалог с ботом / добавить его в группу; `docker logs alertmanager` |
 | Новый пароль Grafana из vault не подходит | Применяется только при первом запуске Grafana | `docker exec grafana grafana cli admin reset-admin-password <пароль>` |
 | Pre-flight *Check free disk space* падает | Не хватает места под образы и модели | Освободить место или задать `common_disk_check_path` / `common_min_free_disk_gb` |
-
-## Возможные улучшения
-
-- Секреты из Infisical вместо Ansible Vault; логи (Docker, nginx) в VictoriaLogs.
-- Cloudflare Tunnel/Access перед nginx (без открытых входящих портов), сертификаты Let's Encrypt или Origin CA.
-- LiteLLM как gateway: квоты по ключам, учёт использования, маршрутизация между несколькими GPU-серверами.
-- Docker Swarm или Kubernetes (GPU Operator) для нескольких нод.
 
 ## Проверено на
 

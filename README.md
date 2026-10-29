@@ -39,6 +39,39 @@ Ansible playbooks that set up a GPU server (Ubuntu + NVIDIA) and run an LLM behi
 `ollama` and `vllm` plug into the shared roles through variables set in the playbook:
 `llm_backend`, `llm_upstream_port`, `llm_health_path`, `llm_served_model`.
 
+## Architecture
+
+### Current
+
+```
+                         GPU server (playbooks/ollama.yml | vllm.yml)
+ Client ──HTTPS──▶ nginx :443  TLS · Bearer tokens · rate limit per token · path allowlist
+                     │ 127.0.0.1
+                     ▼
+                   Ollama :11434  or  vLLM :8000      Docker Compose, one backend per server
+                     │
+                   NVIDIA GPU   driver 580-server-open (signed modules) · Container Toolkit · CDI
+                   container-autoheal (systemd timer): restarts unhealthy containers, exports health
+
+ node_exporter · dcgm-exporter · vLLM /metrics ──▶ vmagent ──HTTPS + basic auth──┐
+                                                                                 ▼
+                         Monitoring server (playbooks/monitoring.yml)   VictoriaMetrics :8428
+                                                    Grafana ◀──────────────────┤
+                                     Telegram ◀── Alertmanager ◀── vmalert ◀───┘
+```
+
+### Design decisions
+
+| Decision | Why |
+|---|---|
+| Docker Compose, not Swarm | One GPU node per backend; GPUs in Swarm work only via generic resources and `deploy.resources.reservations.devices` is ignored there |
+| Driver from the Ubuntu archive, signed modules, no DKMS | Works with Secure Boot, no module builds on kernel updates; driver and kernel are held and upgraded together |
+| One backend per GPU server, Ollama or vLLM | Both reserve VRAM; Ollama is simple and runs on CPU (dev, CI), vLLM gives throughput under concurrent load (production) |
+| Model on `127.0.0.1`, only nginx exposed | Ollama has no auth and exposes `/api/pull`, `/api/delete`; one place for TLS, tokens and limits |
+| OpenAI-compatible API | Clients do not change when switching backends or adding a gateway |
+| Separate monitoring server, push via vmagent | GPU servers need no inbound ports for monitoring; works across providers (OVH, DigitalOcean, Cherry) |
+| Autoheal as a systemd timer | Docker restart policies ignore `unhealthy`; no third-party image needed |
+
 ## Quick start
 
 ```bash
@@ -264,13 +297,6 @@ including idempotency, API checks through nginx, metrics delivery over HTTPS and
 | No alerts in Telegram | Alertmanager disabled, wrong chat id, or the bot cannot write to the chat | Check `monitoring_stack_telegram_*`; start a chat with the bot / add it to the group; `docker logs alertmanager` |
 | New Grafana password from vault does not work | Applied only on Grafana's first start | `docker exec grafana grafana cli admin reset-admin-password <password>` |
 | Pre-flight *Check free disk space* fails | Not enough space for images and models | Free space or set `common_disk_check_path` / `common_min_free_disk_gb` |
-
-## Possible improvements
-
-- Secrets from Infisical instead of Ansible Vault; logs (Docker, nginx) to VictoriaLogs.
-- Cloudflare Tunnel/Access in front of nginx (no open inbound ports), Let's Encrypt or Origin CA certificates.
-- LiteLLM as a gateway: per-key quotas, usage accounting, routing across several GPU servers.
-- Docker Swarm or Kubernetes (GPU Operator) for multi-node scheduling.
 
 ## Tested on
 
