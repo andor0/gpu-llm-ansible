@@ -276,28 +276,6 @@ including idempotency, API checks through nginx, metrics delivery over HTTPS and
   use `llm_proxy_tls_mode: provided` with a managed certificate in production.
 - Per-token concurrency and `max_tokens` limits are not enforced by nginx (only the request rate).
 
-## Troubleshooting
-
-| Symptom | Likely cause | What to do |
-|---|---|---|
-| `NVIDIA GPU not found, but this playbook requires it` | No NVIDIA device on PCI (e.g. an AMD Instinct droplet), or the GPU is not passed through to the VM | `lspci -nn \| grep -i -e nvidia -e 10de`. Only NVIDIA (vendor `10de`) is supported; recreate the server with an NVIDIA GPU |
-| `nvidia-smi`: *couldn't communicate with the NVIDIA driver* | Booted into a kernel without NVIDIA modules (e.g. kernel upgraded outside the playbook), or reboot pending | `uname -r` vs `dpkg -l 'linux-modules-nvidia-*'`; rerun `--tags nvidia_driver` (installs modules for the kernel flavour and reboots) |
-| `Failed to initialize NVML: Driver/library version mismatch` | Userspace driver upgraded, old kernel module still loaded | Reboot; upgrade only with `nvidia_driver_upgrade=true` |
-| `could not select device driver "nvidia" with capabilities: [[gpu]]` | Container toolkit missing or Docker not restarted | `--tags nvidia_container_toolkit`; check `docker info \| grep -i runtimes` |
-| `Failed to initialize NVML: Unknown Error` inside a running container | Container lost GPU access after `systemctl daemon-reload` (see Known limitations) | `docker restart ollama` (or `vllm`); autoheal does it once the healthcheck fails |
-| vLLM: *CUDA out of memory* / *free memory … less than desired GPU memory utilization* | VRAM taken by another process (e.g. Ollama) or the model + KV cache does not fit | `nvidia-smi`; lower `vllm_max_model_len` or `vllm_gpu_memory_utilization`, use a quantized model (`Qwen/Qwen3-8B-AWQ`/`-FP8`) |
-| vLLM stays `health: starting` for a long time | Downloading weights, CUDA graph compilation | `docker logs -f vllm`; the playbook waits up to `vllm_start_timeout` |
-| First request after deploying a new GPU takes ~40 s (Ollama) | CUDA kernel JIT compilation | Done by the playbook warm-up; the cache persists in `/srv/llm/ollama-cuda-cache` |
-| API `401` | Missing or wrong token, missing `Bearer ` prefix | `Authorization: Bearer <key>`; key must be in `llm_proxy_api_keys` |
-| API `404` | Path is not in the allowlist (e.g. `/api/tags`, `/api/pull`) | Use `/v1/*` endpoints; extend `llm_proxy_allowed_paths` only if really needed |
-| API `429` | Rate limit per token | Raise `llm_proxy_rate_limit` / `llm_proxy_rate_burst` or use separate keys |
-| API `502` | Backend is down or restarting | `docker ps`, `docker logs ollama\|vllm`, `journalctl -t container-autoheal` |
-| API `504` / cut-off answers | Long non-streaming generation exceeds the timeout (Cloudflare: ~100 s) | Use `"stream": true`; raise `llm_proxy_read_timeout` |
-| *Wait for this host's metrics in VictoriaMetrics* fails | UFW on the monitoring host blocks the GPU server, wrong password, or the URL host is not in the certificate | `docker logs vmagent` (`x509` → add the name/IP to `monitoring_stack_tls_extra_names`; `401` → password; timeout → `monitoring_stack_remote_write_sources`) |
-| No alerts in Telegram | Alertmanager disabled, wrong chat id, or the bot cannot write to the chat | Check `monitoring_stack_telegram_*`; start a chat with the bot / add it to the group; `docker logs alertmanager` |
-| New Grafana password from vault does not work | Applied only on Grafana's first start | `docker exec grafana grafana cli admin reset-admin-password <password>` |
-| Pre-flight *Check free disk space* fails | Not enough space for images and models | Free space or set `common_disk_check_path` / `common_min_free_disk_gb` |
-
 ## Tested on
 
 DigitalOcean GPU Droplet: NVIDIA H100 SXM5 80GB, Ubuntu 26.04.1 LTS (kernel 7.0.0, `linux-virtual`), 2026-10-28.

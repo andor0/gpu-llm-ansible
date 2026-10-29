@@ -276,28 +276,6 @@ ansible-playbook -i tests/ci/inventory.yml playbooks/ollama.yml
   в проде — `llm_proxy_tls_mode: provided` с управляемым сертификатом.
 - Лимиты на параллельные запросы и `max_tokens` на токен nginx не ограничивает (только частоту запросов).
 
-## Troubleshooting
-
-| Симптом | Вероятная причина | Что делать |
-|---|---|---|
-| `NVIDIA GPU not found, but this playbook requires it` | На PCI нет устройства NVIDIA (например, дроплет с AMD Instinct) или GPU не проброшен в VM | `lspci -nn \| grep -i -e nvidia -e 10de`. Поддерживается только NVIDIA (vendor `10de`); пересоздать сервер с NVIDIA GPU |
-| `nvidia-smi`: *couldn't communicate with the NVIDIA driver* | Загружено ядро без модулей NVIDIA (ядро обновили в обход плейбука) или не было перезагрузки | Сравнить `uname -r` и `dpkg -l 'linux-modules-nvidia-*'`; перезапустить `--tags nvidia_driver` (поставит модули под flavour ядра и перезагрузит) |
-| `Failed to initialize NVML: Driver/library version mismatch` | Userspace драйвера обновился, а загружен старый модуль ядра | Перезагрузить; обновлять только через `nvidia_driver_upgrade=true` |
-| `could not select device driver "nvidia" with capabilities: [[gpu]]` | Не установлен container toolkit или Docker не перезапущен | `--tags nvidia_container_toolkit`; проверить `docker info \| grep -i runtimes` |
-| `Failed to initialize NVML: Unknown Error` внутри работающего контейнера | Контейнер потерял доступ к GPU после `systemctl daemon-reload` (см. «Известные ограничения») | `docker restart ollama` (или `vllm`); autoheal сделает это, когда упадёт healthcheck |
-| vLLM: *CUDA out of memory* / *free memory … less than desired GPU memory utilization* | Видеопамять занята другим процессом (например, Ollama) или модель + KV-кеш не помещаются | `nvidia-smi`; уменьшить `vllm_max_model_len` или `vllm_gpu_memory_utilization`, взять квантизованную модель (`Qwen/Qwen3-8B-AWQ`/`-FP8`) |
-| vLLM долго в состоянии `health: starting` | Скачивание весов, компиляция CUDA graphs | `docker logs -f vllm`; плейбук ждёт до `vllm_start_timeout` |
-| Первый запрос после развёртывания на новом GPU идёт ~40 с (Ollama) | JIT-компиляция CUDA-ядер | Делается прогревом в плейбуке; кэш сохраняется в `/srv/llm/ollama-cuda-cache` |
-| API `401` | Нет токена, неверный токен, нет префикса `Bearer ` | `Authorization: Bearer <ключ>`; ключ должен быть в `llm_proxy_api_keys` |
-| API `404` | Путь не в allowlist (например, `/api/tags`, `/api/pull`) | Использовать эндпоинты `/v1/*`; расширять `llm_proxy_allowed_paths` только при необходимости |
-| API `429` | Rate limit на токен | Поднять `llm_proxy_rate_limit` / `llm_proxy_rate_burst` или выдать отдельные ключи |
-| API `502` | Бэкенд упал или перезапускается | `docker ps`, `docker logs ollama\|vllm`, `journalctl -t container-autoheal` |
-| API `504` / обрезанные ответы | Долгая генерация без стриминга превышает таймаут (у Cloudflare ~100 с) | Использовать `"stream": true`; поднять `llm_proxy_read_timeout` |
-| Падает *Wait for this host's metrics in VictoriaMetrics* | UFW на сервере мониторинга не пускает GPU-сервер, неверный пароль или адреса из URL нет в сертификате | `docker logs vmagent` (`x509` → добавить имя/IP в `monitoring_stack_tls_extra_names`; `401` → пароль; таймаут → `monitoring_stack_remote_write_sources`) |
-| Нет алертов в Telegram | Alertmanager выключен, неверный chat id или бот не может писать в чат | Проверить `monitoring_stack_telegram_*`; начать диалог с ботом / добавить его в группу; `docker logs alertmanager` |
-| Новый пароль Grafana из vault не подходит | Применяется только при первом запуске Grafana | `docker exec grafana grafana cli admin reset-admin-password <пароль>` |
-| Pre-flight *Check free disk space* падает | Не хватает места под образы и модели | Освободить место или задать `common_disk_check_path` / `common_min_free_disk_gb` |
-
 ## Проверено на
 
 DigitalOcean GPU Droplet: NVIDIA H100 SXM5 80GB, Ubuntu 26.04.1 LTS (ядро 7.0.0, `linux-virtual`), 2026-10-28.
